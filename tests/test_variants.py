@@ -171,11 +171,26 @@ def test_lead_is_the_gap_between_the_top_two():
 
 
 def test_confidence_gate_never_suppresses_an_alert():
-    """`is_confident` gates the RECOMMENDATION only. notify.should_alert lists the four
-    suppression rules and variant score is not among them."""
-    import inspect
+    """`is_confident` gates the RECOMMENDATION only. A posting whose variant scores are
+    all zero and ambiguous still alerts: notify.should_alert suppresses on eligibility,
+    role class, duplication and prior delivery, and on nothing else."""
+    from datetime import UTC, datetime
 
     from jobmon import notify
+    from jobmon.models import Analysis, Posting
 
-    doc = inspect.getdoc(notify.should_alert)
-    assert "variant" not in doc.lower()
+    posting = Posting(
+        global_id="greenhouse:acme:1", source="greenhouse", company="Acme",
+        title="Software Engineer", locations=["NYC"], description_html="",
+        description_text="", apply_url="https://x/1",
+        first_seen_at=datetime.now(UTC), last_seen_at=datetime.now(UTC),
+    )
+    scores = {"generalist": 0.0, "mle": 0.0, "systems": 0.0, "security": 0.0}
+    assert variants.is_confident(scores)[0] is False
+    analysis = Analysis(
+        global_id=posting.global_id, role_class="unclear", function=[],
+        eligibility="unknown", eligibility_evidence=[], keywords={}, gaps=[],
+        recommended_variant=variants.recommend(scores), variant_scores=scores,
+    )
+    alert_now, _ = notify.should_alert(posting, analysis, tier=set())
+    assert alert_now is True

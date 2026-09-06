@@ -32,7 +32,7 @@ import bootstrap_companies as bc
         # the rest of the five
         ("https://jobs.ashbyhq.com/openai/1234-abcd", ("ashby", "openai")),
         ("https://apply.workable.com/enfos-inc/j/CA15908E0A/apply?utm_source=Simplify", ("workable", "enfos-inc")),
-        ("https://jobs.smartrecruiters.com/Square/743999?oga=true", ("smartrecruiters", "Square")),
+        ("https://jobs.smartrecruiters.com/Square/743999?oga=true", ("smartrecruiters", "square")),
     ],
 )
 def test_extract_ats(url, expected):
@@ -55,9 +55,31 @@ def test_non_ats_urls_are_not_extracted(url):
     assert bc.extract_ats(url) is None
 
 
-def test_slug_case_is_preserved():
-    """SmartRecruiters and Ashby slugs are case-sensitive in the URL."""
-    assert bc.extract_ats("https://jobs.smartrecruiters.com/ServiceNow/123")[1] == "ServiceNow"
+# --- slug case: folded only where the board API verifiably ignores case ------------
+
+@pytest.mark.parametrize(
+    "url,expected_slug",
+    [
+        # case-insensitive APIs: fold to lowercase so one board is one entry
+        ("https://boards.greenhouse.io/APPIAN/jobs/1", "appian"),
+        ("https://jobs.ashbyhq.com/AnyScale/1234", "anyscale"),
+        ("https://jobs.smartrecruiters.com/AbbVie/743", "abbvie"),
+        # case-SENSITIVE APIs: preserve exactly, folding these manufactures a 404
+        ("https://jobs.lever.co/Nomagic/uuid", "Nomagic"),
+        ("https://apply.workable.com/onlogic-inc/j/ABC", "onlogic-inc"),
+    ],
+)
+def test_slug_case_folding_matches_verified_api_behaviour(url, expected_slug):
+    assert bc.extract_ats(url)[1] == expected_slug
+
+
+def test_lever_and_workable_are_never_folded():
+    """Verified 2026-09-06: jobs.lever.co/nomagic and apply.workable.com/OnLogic-Inc both
+    404 while the other casing returns 200. Folding either drops a real company."""
+    assert "lever" not in bc.CASE_INSENSITIVE_ATS
+    assert "workable" not in bc.CASE_INSENSITIVE_ATS
+    assert bc.normalize_slug("lever", "Nomagic") == "Nomagic"
+    assert bc.normalize_slug("greenhouse", "Appian") == "appian"
 
 
 # --- row parsing, both formats -----------------------------------------------------
@@ -136,6 +158,17 @@ def test_dedup_across_both_repos():
     assert len(schonfeld) == 1
 
 
+def test_first_source_wins_the_company_name():
+    """Document order is source priority. The same board named differently by two lists
+    keeps the earlier list's name, which is why companies.yaml puts SimplifyJobs first."""
+    a = '| **Chicago Trading Company** | R | L | [Apply](https://jobs.lever.co/ctc/1) | 1d |'
+    b = '| **CTC** | R | L | [Apply](https://jobs.lever.co/ctc/2) | 1d |'
+    first = bc.harvest({"simplify": a, "other": b})
+    assert [e["company"] for e in first.entries] == ["Chicago Trading Company"]
+    flipped = bc.harvest({"other": b, "simplify": a})
+    assert [e["company"] for e in flipped.entries] == ["CTC"]
+
+
 def test_non_ats_row_is_dropped_and_counted():
     """T1.5: the Google careers-page row is skipped and shows up in the report by host."""
     h = bc.harvest({"html": HTML_README})
@@ -182,3 +215,11 @@ def test_every_emitted_ats_has_an_endpoint_template():
     from jobmon.adapters.ats_public import ENDPOINTS
 
     assert {ats for ats, _ in bc.ATS_PATTERNS} <= set(ENDPOINTS)
+
+
+def test_hot_listing_decoration_is_stripped_from_company_names():
+    """SimplifyJobs prefixes hot rows with a flame; it is not part of the employer name
+    and would otherwise be printed in every alert for that company."""
+    md = '| **\U0001f525 Notion** | SWE Intern | NYC | [Apply](https://jobs.ashbyhq.com/notion/1) | 1d |'
+    h = bc.harvest({"s": md})
+    assert [e["company"] for e in h.entries] == ["Notion"]

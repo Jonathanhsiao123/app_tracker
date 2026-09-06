@@ -35,6 +35,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Slugs that are really URL path furniture, not a company.
 RESERVED_SLUGS = frozenset({"embed", "job_app", "jobs", "j", "api", "search"})
 
+# Boards whose API ignores slug case, so the slug can be canonicalised to lowercase.
+# Verified against live boards 2026-09-06:
+#   greenhouse       appian=200      APPIAN=200       -> insensitive
+#   ashby            Anima=200       anima=200        -> insensitive
+#   smartrecruiters  AbbVie=200      abbvie=200       -> insensitive
+#   lever            Nomagic=200     nomagic=404      -> SENSITIVE, never fold
+#   workable         onlogic-inc=200 OnLogic-Inc=404  -> SENSITIVE, never fold
+# Folding lever or workable manufactures 404s rather than preventing them. Re-verify before
+# adding to this set; the cost of being wrong is a company silently dropped from the sweep.
+CASE_INSENSITIVE_ATS = frozenset({"greenhouse", "ashby", "smartrecruiters"})
+
 # Ordered: the greenhouse embed form must be tried before the generic greenhouse path, or
 # "embed" is read as the slug (T1.4).
 ATS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -100,10 +111,21 @@ def extract_ats(url: str) -> tuple[str, str] | None:
     for ats, pattern in ATS_PATTERNS:
         m = pattern.search(url)
         if m:
-            slug = m.group(1).strip(".-")
+            slug = normalize_slug(ats, m.group(1).strip(".-"))
             if slug and slug.lower() not in RESERVED_SLUGS:
                 return ats, slug
     return None
+
+
+def normalize_slug(ats: str, slug: str) -> str:
+    """Canonical slug for a board. Lowercased only where the API is known to ignore case;
+    see CASE_INSENSITIVE_ATS for the evidence and for the two boards that are not."""
+    return slug.lower() if ats in CASE_INSENSITIVE_ATS else slug
+
+
+# SimplifyJobs decorates hot listings with a flame; other lists use stars and rockets.
+# These are row annotations, not part of the employer's name, and they end up in alerts.
+DECORATION = "\U0001f525⭐️✨\U0001f195\U0001f31f\U0001f680\U0001f6a8 \t"
 
 
 def cell_text(cell: str) -> str:
@@ -111,7 +133,7 @@ def cell_text(cell: str) -> str:
     text = _TAG.sub("", cell)
     text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # markdown link -> its label
     text = text.replace("**", "").replace("</br>", " ")
-    return html.unescape(text).strip()
+    return html.unescape(text).strip(DECORATION).strip()
 
 
 def cell_urls(cell: str) -> list[str]:
@@ -160,7 +182,11 @@ def iter_rows(text: str, source: str = "") -> Iterator[Row]:
 def harvest(documents: dict[str, str]) -> Harvest:
     """Extract every (company, ats, slug) from `{source_name: readme_text}`.
 
-    Dedups on (ats, lowercased slug); the first source to mention a slug names it (T1.3).
+    Dedups on (ats, lowercased slug). **Document order is source priority**: the first
+    source to mention a slug supplies the company name every later source is deduped
+    against, so pass the most current, best-maintained list first. `companies.yaml` orders
+    `github_repos` accordingly (SimplifyJobs first) and says so.
+
     Rows that carry a link but no supported ATS URL are counted in the dropped report
     (T1.5), by host, so a systematically missed ATS is visible rather than silent.
     """

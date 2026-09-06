@@ -14,7 +14,8 @@ Not scraped, on purpose: LinkedIn, Indeed, ZipRecruiter, Glassdoor.
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Protocol
+from collections.abc import Iterator
+from typing import Any, Protocol
 
 import httpx
 

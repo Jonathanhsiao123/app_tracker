@@ -42,9 +42,16 @@ class Posting:
 
     @staticmethod
     def make_global_id(source: str, company: str, source_job_id: str) -> str:
-        """Build the primary key. TODO: slugify company (case, punctuation, legal suffixes)
-        so "Acme, Inc." and "acme inc" do not produce two keys for one company."""
-        raise NotImplementedError
+        """Build the primary key.
+
+        The company is slugified so "Acme, Inc." and "acme inc" do not produce two keys for
+        one company. Imported here rather than at module scope: `normalize` imports this
+        module, so a top-level import would be circular.
+        """
+        from .normalize import normalize_company
+
+        slug = normalize_company(company).replace(" ", "-") or "unknown"
+        return f"{source}:{slug}:{source_job_id}"
 
 
 @dataclass(slots=True)
