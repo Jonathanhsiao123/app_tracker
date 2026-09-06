@@ -1,0 +1,25 @@
+# Company-level eligibility overrides (spec 6). Hand-maintained. OVERRIDES BEAT TEXT.
+#
+# status: blocked | likely_ok      (only these two - "unknown" means: no entry here)
+# note:   free text, why
+# checked_on: YYYY-MM-DD           required; a stale check should be visible in the alert
+#
+# Seeding, once, one evening, for the top ~60 targets (spec 6):
+#   - public H-1B and PERM disclosure data (DOL LCA filings, and the aggregator sites
+#     built on them) -> likely_ok
+#   - known defense and government-contractor employers -> blocked
+# More reliable than any text heuristic, which is why it wins over one.
+#
+# TODO: populate. Format below.
+
+# anduril:
+#   status: blocked
+#   note: Defense primes; most reqs are ITAR/clearance-gated.
+#   checked_on: 2026-09-03
+#
+# stripe:
+#   status: likely_ok
+#   note: Consistent H-1B filings in DOL disclosure data.
+#   checked_on: 2026-09-03
+
+{}

@@ -1,0 +1,40 @@
+# Scheduled run (spec 3). GitHub Actions cron in a PRIVATE repo. Every 3 hours - faster
+# is not useful, recruiters do not read a queue in real time.
+#
+# Actions is simpler and free; switch to a systemd timer on a VPS only if secrets
+# management here becomes annoying.
+name: jobmon
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+
+      # TODO: the SQLite file is gitignored and Actions runners are ephemeral, so state
+      # must persist somewhere or every run re-alerts everything. Options, cheapest first:
+      #   1. actions/cache keyed on a constant - simple, occasionally evicted (then a
+      #      duplicate alert storm, which is survivable but loud).
+      #   2. Commit the DB to a private branch - ugly, reliable.
+      #   3. actions/upload-artifact + download-artifact with a long retention.
+      # Pick one before Phase 1 ships; this is the step that decides whether dedup works.
+      - name: Restore database
+        run: echo "TODO"
+
+      - name: Run
+        env:
+          JOBMON_NTFY_TOPIC: ${{ secrets.JOBMON_NTFY_TOPIC }}
+        run: jobmon run
+
+      - name: Persist database
+        if: always()
+        run: echo "TODO"

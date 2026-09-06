@@ -1,0 +1,31 @@
+# Resume variant profiles (spec 9, build step 0). Category -> weight, same categories as
+# taxonomy.yaml. A variant is defined by how much it CARES about each category, not by a
+# term list: analyze/variants.py reads `weights` and nothing else.
+#
+# `pdf: null` is legal and must not raise. The document is what you attach when applying;
+# scoring never opens it. Fill each path in when the PDF exists.
+#
+# A category omitted from a weights block contributes 0 (build step T0.3). That is how
+# `requirements` (ms required / phd preferred) stays out of variant scoring - no variant
+# lists it, so it scores nothing without needing a special case.
+
+generalist:
+  pdf: null
+  weights:
+    languages: 1.0
+    infra: 0.8
+    ml_topics: 0.3
+    systems: 0.5
+    security: 0.3
+
+mle:
+  pdf: null
+  weights: {ml_frameworks: 1.0, ml_topics: 1.0, languages: 0.6, infra: 0.5, security: 0.4}
+
+systems:
+  pdf: null
+  weights: {systems: 1.0, languages: 0.8, infra: 0.4, ml_topics: 0.2}
+
+security:
+  pdf: null
+  weights: {security: 1.0, ml_topics: 0.6, languages: 0.6, infra: 0.5}

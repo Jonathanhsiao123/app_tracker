@@ -1,0 +1,12 @@
+# Spec 3: the SQLite file is committed nowhere.
+*.db
+*.db-wal
+*.db-shm
+.cache/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Resume PDFs are checked in (spec 9); anything else personal is not.

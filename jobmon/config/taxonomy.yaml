@@ -1,0 +1,34 @@
+# Hand-curated keyword taxonomy (spec 8). Category -> term list.
+# The dictionary IS the analysis engine. Interpretable on purpose: a curated list is
+# debuggable, a TF-IDF or embedding model is not, at this scale.
+#
+# TODO: add an alias layer. Shape to aim for once plain lists stop being enough:
+#   ml_topics:
+#     - term: reinforcement learning
+#       aliases: [rl, deep rl]
+# Until then, list aliases as separate terms and dedupe in keywords.match().
+
+languages: [python, c++, c, rust, go, java, typescript, verilog, cuda]
+
+ml_frameworks: [pytorch, tensorflow, jax, scikit-learn, huggingface, ray]
+
+ml_topics:
+  - rl
+  - reinforcement learning
+  - adversarial
+  - robustness
+  - llm
+  - fine-tuning
+  - computer vision
+  - nlp
+  - distributed training
+
+infra: [kubernetes, docker, aws, gcp, terraform, spark, kafka, airflow]
+
+systems: [embedded, rtos, firmware, drivers, dsp, fpga, instrumentation, pyqt]
+
+security: [intrusion detection, ids, iot, threat modeling, cryptography, pentest]
+
+# Not skills - flags. keywords.degree_requirement() reads these; CATEGORY_WEIGHTS gives
+# this category 0.0 so it never influences variant scoring.
+requirements: [ms required, phd required, phd preferred, ms preferred]

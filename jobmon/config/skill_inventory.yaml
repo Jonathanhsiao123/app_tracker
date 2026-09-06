@@ -1,0 +1,23 @@
+# What I actually have, by the same categories as taxonomy.yaml (spec 8).
+# gap_list() = taxonomy terms in a posting MINUS these.
+#
+# Be honest here. An inflated inventory produces an empty gap list, which makes the most
+# useful output of the whole system useless.
+#
+# TODO: fill in from resume + coursework + projects. Placeholders below are from the
+# variant descriptions in spec 9 and need verifying against the actual resume.
+
+languages: []        # TODO: e.g. [python, c++, c]
+ml_frameworks: []    # TODO: e.g. [pytorch]
+ml_topics: []        # TODO: e.g. [adversarial, robustness]
+infra: []            # TODO: honestly - is there any Kubernetes anywhere in the history?
+systems: []          # TODO: e.g. [instrumentation, pyqt]  (Lenahan Lab spectrometer work)
+security: []         # TODO: e.g. [intrusion detection, ids, iot]  (ML-based IDS project)
+
+# Near-substitutes: a posting term whose gap is COSMETIC because of something I do have.
+# "They said TensorFlow, I have PyTorch" is the canonical case (spec 8).
+# TODO: keywords.gap_list() should mark these "cosmetic" rather than hiding them.
+equivalents:
+  tensorflow: pytorch
+  jax: pytorch
+  gcp: aws
