@@ -9,4 +9,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Local secrets: the ntfy topic is a bearer credential, since the topic name is
+# the only thing gating who can read your alerts.
+.env
+
 # Resume PDFs are checked in (spec 9); anything else personal is not.

@@ -2,22 +2,54 @@
 # gap_list() = taxonomy terms in a posting MINUS these.
 #
 # Be honest here. An inflated inventory produces an empty gap list, which makes the most
-# useful output of the whole system useless.
+# useful output of the whole system useless. An EMPTY one produces a maximal gap list,
+# which is equally useless.
 #
-# TODO: fill in from resume + coursework + projects. Placeholders below are from the
-# variant descriptions in spec 9 and need verifying against the actual resume.
+# Extracted 2026-09-06 from resumes/Jonathan_Hsiao_Resume_Sept2026(1).pdf.
+# LITERAL MATCHES ONLY - a taxonomy term is listed here only if that term appears in the
+# source document. Nothing is added by inference (build step T2.7). Terms deliberately
+# withheld, and why, are listed at the bottom; hand-add any you disagree with.
+#
+# Shape is a flat category -> term list, per the decision to defer {depth, evidence} to
+# its own step. Consequence: gap_list cannot use depth to judge real vs cosmetic, so it
+# uses the `equivalents` map below instead.
 
-languages: []        # TODO: e.g. [python, c++, c]
-ml_frameworks: []    # TODO: e.g. [pytorch]
-ml_topics: []        # TODO: e.g. [adversarial, robustness]
-infra: []            # TODO: honestly - is there any Kubernetes anywhere in the history?
-systems: []          # TODO: e.g. [instrumentation, pyqt]  (Lenahan Lab spectrometer work)
-security: []         # TODO: e.g. [intrusion detection, ids, iot]  (ML-based IDS project)
+languages: [python, c, java, verilog]        # "Languages: Python, C, R, Java, JavaScript, Verilog"
+ml_frameworks: [pytorch, tensorflow]         # "ML / AI: PyTorch, TensorFlow"
+ml_topics: [reinforcement learning, adversarial, robustness, llm]
+infra: []                                    # no Kubernetes, Docker, AWS or GCP anywhere
+systems: [pyqt, drivers]                     # "PyQt6"; "Developed Python drivers"
+security: [intrusion detection, iot]         # "IoT Intrusion Detection"; "IoT devices"
 
 # Near-substitutes: a posting term whose gap is COSMETIC because of something I do have.
 # "They said TensorFlow, I have PyTorch" is the canonical case (spec 8).
-# TODO: keywords.gap_list() should mark these "cosmetic" rather than hiding them.
+#
+# A gap counts as cosmetic ONLY if the substitute named here is itself in the inventory
+# above. `gcp: aws` therefore still yields a REAL gap, because there is no aws either -
+# which is correct, and is the kind of thing an equivalents map gets wrong if it is
+# trusted blindly.
 equivalents:
   tensorflow: pytorch
   jax: pytorch
+  scikit-learn: pytorch
   gcp: aws
+  ids: intrusion detection
+
+# --- deliberately NOT listed, though arguably present -------------------------------
+# Each of these is a real capability the resume demonstrates without using the taxonomy's
+# word for it. Listing them would be inference, so they are withheld and surfaced here
+# instead. Hand-add any you want counted - that is a two-second edit and it is your call.
+#
+#   computer vision  - "CNNs, YOLOv8" (YOLOv8 is object detection, but the term is absent)
+#   embedded         - "TinyML deployment on microcontrollers"
+#   instrumentation  - "acquisition and control software for CW EPR and EDMR spectrometers"
+#   dsp              - "digital lock-in amplifier", "adaptive signal averaging", "1/f-aware
+#                      noise detection"
+#   ids              - the resume says "intrusion detection" in full, never the acronym;
+#                      handled as an alias in keywords.py rather than a second entry
+#
+# --- traps avoided, recorded so they are not reintroduced ---------------------------
+#   go     - "Go Engine from Scratch" is the BOARD GAME, not the language.
+#   aws    - "$300,000 Amazon-funded" is funding, not Amazon Web Services.
+#   nlp    - RAG and LLM work is present; the term "NLP" is not.
+#   distributed training - "Federated Learning" is present; these are not the same thing.

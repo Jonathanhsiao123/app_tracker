@@ -269,6 +269,24 @@ def iter_postings(
         yield _row_to_posting(row), get_analysis(conn, row["global_id"])
 
 
+def unalerted_postings(conn: sqlite3.Connection, run_id: int) -> list[Posting]:
+    """Postings seen in this run that have never been delivered.
+
+    This, not "the upsert said new", is what drives alerting. A posting whose notification
+    failed last run is stored and no longer new, so keying off the upsert outcome would
+    lose it permanently - the exact failure `_send` claims not to have. Duplicates and
+    reposts are excluded here because they were alerted under their original global_id.
+    """
+    rows = conn.execute(
+        """SELECT p.* FROM postings p
+           LEFT JOIN duplicates d ON d.global_id = p.global_id
+           WHERE p.last_seen_run = ? AND p.alerted_at IS NULL AND d.global_id IS NULL
+           ORDER BY p.first_seen_at""",
+        (run_id,),
+    ).fetchall()
+    return [_row_to_posting(r) for r in rows]
+
+
 def mark_alerted(conn: sqlite3.Connection, global_ids: list[str], at: datetime) -> None:
     """Record that these went out. Called AFTER the notifier confirms delivery, never
     before: a commit ahead of a failed notify loses that alert permanently."""
