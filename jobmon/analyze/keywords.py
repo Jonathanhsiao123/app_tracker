@@ -11,6 +11,7 @@ resume edits. Nothing here rewrites anything - it reports.
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any
 
@@ -51,6 +52,53 @@ ALIASES: dict[str, str] = {
     "adversarial robustness": "adversarial",
     "device drivers": "drivers",
     "firmware development": "firmware",
+    # --- domain synonyms -----------------------------------------------------------
+    # These are the taxonomy's own "alias layer" TODO. They matter in both directions: a
+    # posting that says "microcontrollers" wants `embedded`, and a RESUME that says
+    # "microcontrollers" demonstrates it. Without them, skill extraction had to either
+    # infer (forbidden by build step T2.7) or leave real capability uncounted, which put
+    # ~1,085 phantom "real gaps" in the report.
+    "yolo": "computer vision",
+    "yolov5": "computer vision",
+    "yolov8": "computer vision",
+    "object detection": "computer vision",
+    "image classification": "computer vision",
+    "image segmentation": "computer vision",
+    "opencv": "computer vision",
+    "microcontroller": "embedded",
+    "microcontrollers": "embedded",
+    "mcu": "embedded",
+    "bare metal": "embedded",
+    "embedded systems": "embedded",
+    "embedded software": "embedded",
+    "tinyml": "embedded",
+    "spectrometer": "instrumentation",
+    "spectrometers": "instrumentation",
+    "spectroscopy": "instrumentation",
+    "oscilloscope": "instrumentation",
+    "lock-in amplifier": "instrumentation",
+    "data acquisition": "instrumentation",
+    "test and measurement": "instrumentation",
+    "signal processing": "dsp",
+    "digital signal processing": "dsp",
+    "adversarially robust": "adversarial",
+    "adversarial examples": "adversarial",
+    "adversarial attacks": "adversarial",
+    "evasion attack": "adversarial",
+    "evasion attacks": "adversarial",
+    "ppo": "reinforcement learning",
+    "dqn": "reinforcement learning",
+    "policy gradient": "reinforcement learning",
+    "rlhf": "reinforcement learning",
+    "eks": "kubernetes",
+    "gke": "kubernetes",
+    "aks": "kubernetes",
+    "pyspark": "spark",
+    "sft": "fine-tuning",
+    "lora": "fine-tuning",
+    "data parallel": "distributed training",
+    "model parallel": "distributed training",
+    "multi-gpu": "distributed training",
 }
 
 # Terms short or common enough that a bare word-boundary match fires on almost every
@@ -72,15 +120,9 @@ CUE_WINDOW = 60  # characters either side of the match
 # asked for, which is noise in the one output that is supposed to be signal.
 _STOP_PHRASES = re.compile(
     r"go[-\s]to[-\s]market|go[-\s]live|go to root|on the go|go deep|go above"
-    r"|go the extra|let[^.]{0,20}go|good to go|r[-\s]?&[-\s]?d",
+    r"|go the extra|let[^.]{0,20}go|good to go|r[-\s]?&[-\s]?d|go engine",
     re.IGNORECASE,
 )
-
-
-def _term_pattern(term: str) -> re.Pattern[str]:
-    """Word-boundary matcher for one term. `\\b` fails on "c++" (the trailing + is not a
-    word char), so boundaries are asserted with lookarounds instead."""
-    return re.compile(rf"(?<![\w+#]){re.escape(term)}(?![\w+#])", re.IGNORECASE)
 
 
 def _has_cue(text: str, start: int, end: int) -> bool:
@@ -100,6 +142,37 @@ def _has_cue(text: str, start: int, end: int) -> bool:
     return bool(_CUE.search(window))
 
 
+def _taxonomy_key(taxonomy: dict[str, list[str]]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple((cat, tuple(terms)) for cat, terms in taxonomy.items())
+
+
+@functools.lru_cache(maxsize=8)
+def _compiled(key: tuple[tuple[str, tuple[str, ...]], ...]):
+    """One combined alternation for the whole taxonomy, built once per taxonomy.
+
+    Compiling ~100 separate patterns and scanning the document once per term cost 10.6ms
+    per posting - 144s over the 13,608-posting corpus, more than doubling a full run. A
+    single alternation scanned once is the same result for a fraction of the work.
+
+    Alternatives are ordered longest-first because `re` takes the first alternative that
+    matches at a position: with "c++" ahead of "c++17", "C++17" would match as "c++" and
+    then fail the trailing boundary check.
+    """
+    taxonomy = {cat: list(terms) for cat, terms in key}
+    known = {t.lower() for terms in taxonomy.values() for t in terms}
+    lookup: dict[str, str] = {t: t for t in known}
+    lookup.update({a.lower(): c for a, c in ALIASES.items() if c in known})
+    category_of = {
+        term.lower(): cat for cat, terms in taxonomy.items() for term in terms
+    }
+    surfaces = sorted(lookup, key=len, reverse=True)
+    combined = re.compile(
+        r"(?<![\w+#])(" + "|".join(re.escape(s) for s in surfaces) + r")(?![\w+#])",
+        re.IGNORECASE,
+    )
+    return combined, lookup, category_of, tuple(taxonomy)
+
+
 def match(
     description_text: str, title: str, taxonomy: dict[str, list[str]]
 ) -> dict[str, list[str]]:
@@ -107,29 +180,26 @@ def match(
 
     Category order from the YAML is preserved so the summary line reads consistently.
     Aliases resolve to the canonical term. Ambiguous one- and two-character terms ("C",
-    "R", "Go") only count with a language cue nearby - without that guard they match
-    essentially every posting and the whole output becomes noise.
+    "R", "Go") only count with a language cue nearby and outside a stop phrase - without
+    those guards they match essentially every posting and the output becomes noise.
     """
+    combined, lookup, category_of, order = _compiled(_taxonomy_key(taxonomy))
     haystack = f"{title}\n{description_text or ''}"
-    # alias -> canonical, restricted to terms this taxonomy actually contains
-    known = {t for terms in taxonomy.values() for t in terms}
-    lookup: dict[str, str] = {t: t for t in known}
-    lookup.update({a: c for a, c in ALIASES.items() if c in known})
-
     found: dict[str, set[str]] = {}
-    canonical_to_category = {
-        term: cat for cat, terms in taxonomy.items() for term in terms
-    }
-    for surface, canonical in lookup.items():
-        category = canonical_to_category.get(canonical)
+    for m in combined.finditer(haystack):
+        surface = m.group(1).lower()
+        canonical = lookup.get(surface)
+        if canonical is None:
+            continue
+        category = category_of.get(canonical)
         if category is None:
             continue
-        for m in _term_pattern(surface).finditer(haystack):
-            if surface.lower() in AMBIGUOUS_TERMS and not _has_cue(haystack, m.start(), m.end()):
-                continue
-            found.setdefault(category, set()).add(canonical)
-            break
-    return {cat: sorted(found[cat]) for cat in taxonomy if cat in found}
+        if canonical in found.get(category, ()):
+            continue  # already recorded; skip the guard work
+        if surface in AMBIGUOUS_TERMS and not _has_cue(haystack, m.start(1), m.end(1)):
+            continue
+        found.setdefault(category, set()).add(canonical)
+    return {cat: sorted(found[cat]) for cat in order if cat in found}
 
 
 def gap_list(

@@ -5,51 +5,78 @@
 # useful output of the whole system useless. An EMPTY one produces a maximal gap list,
 # which is equally useless.
 #
-# Extracted 2026-09-06 from resumes/Jonathan_Hsiao_Resume_Sept2026(1).pdf.
-# LITERAL MATCHES ONLY - a taxonomy term is listed here only if that term appears in the
-# source document. Nothing is added by inference (build step T2.7). Terms deliberately
-# withheld, and why, are listed at the bottom; hand-add any you disagree with.
+# DERIVED, not hand-written. Regenerate with:
+#     python -c "from jobmon import config_loader as c; from jobmon.analyze import keywords
+#                cfg=c.load(); print(keywords.match(open('resume.txt').read(),'',cfg.taxonomy))"
+# Source: resumes/Jonathan_Hsiao_Resume_Sept2026(1).pdf, extracted 2026-09-06 through the
+# same alias-aware matcher the postings go through. A term is here only if the resume
+# contains it or one of its ALIASES - never by inference (build step T2.7).
 #
-# Shape is a flat category -> term list, per the decision to defer {depth, evidence} to
-# its own step. Consequence: gap_list cannot use depth to judge real vs cosmetic, so it
-# uses the `equivalents` map below instead.
+# Shape is a flat category -> term list, per the decision to defer {depth, evidence} to its
+# own step. Consequence: gap_list judges real vs cosmetic from `equivalents` below, not
+# from depth.
 
-languages: [python, c, java, verilog]        # "Languages: Python, C, R, Java, JavaScript, Verilog"
-ml_frameworks: [pytorch, tensorflow]         # "ML / AI: PyTorch, TensorFlow"
-ml_topics: [reinforcement learning, adversarial, robustness, llm]
-infra: []                                    # no Kubernetes, Docker, AWS or GCP anywhere
-systems: [pyqt, drivers]                     # "PyQt6"; "Developed Python drivers"
-security: [intrusion detection, iot]         # "IoT Intrusion Detection"; "IoT devices"
+languages: [c, java, python, verilog]
+ml_frameworks: [pytorch, tensorflow]
+ml_topics: [adversarial, computer vision, llm, reinforcement learning, robustness]
+infra: []                       # no Kubernetes, Docker, AWS or GCP anywhere. Real gaps.
+systems: [drivers, embedded, instrumentation, pyqt]
+security: [intrusion detection, iot]
+
+# How the three non-obvious entries above are evidenced, via ALIASES in keywords.py:
+#   computer vision <- "YOLOv8"
+#   embedded        <- "microcontrollers", "TinyML"
+#   instrumentation <- "spectrometers", "spectroscopy", "lock-in amplifier"
+# Each was previously withheld as inference and cost ~1,085 phantom "real gaps" across the
+# corpus. Routing them through an explicit, auditable alias map makes them evidence.
+# Delete an alias in keywords.py to withdraw one.
 
 # Near-substitutes: a posting term whose gap is COSMETIC because of something I do have.
 # "They said TensorFlow, I have PyTorch" is the canonical case (spec 8).
 #
 # A gap counts as cosmetic ONLY if the substitute named here is itself in the inventory
 # above. `gcp: aws` therefore still yields a REAL gap, because there is no aws either -
-# which is correct, and is the kind of thing an equivalents map gets wrong if it is
-# trusted blindly.
+# which is correct, and is the kind of thing an equivalents map gets wrong if trusted
+# blindly. It is left in deliberately as the worked example of that.
 equivalents:
+  # ML frameworks: all PyTorch-adjacent, and PyTorch is the deepest thing here.
   tensorflow: pytorch
   jax: pytorch
   scikit-learn: pytorch
-  gcp: aws
+  huggingface: pytorch
+  # Hardware/systems: Verilog is FPGA work; driver work is firmware-adjacent.
+  fpga: verilog
+  firmware: drivers
+  rtos: embedded
+  dsp: instrumentation
+  # Topics
+  nlp: llm
   ids: intrusion detection
+  # JUDGEMENT CALL, and the highest-impact entry here: c++ was the single most common
+  # "real" gap in the corpus (830 postings). C and C++ are genuinely different languages,
+  # but for a new-grad req listing "C/C++" the transfer is real. Marked cosmetic so the
+  # alert says "c++ (~c)" rather than implying no systems-language background at all.
+  # Delete this line if you would rather see it as a hard gap.
+  c++: c
+  # Left as a REAL gap on purpose - no substitute is held, so the map must not pretend:
+  gcp: aws
 
-# --- deliberately NOT listed, though arguably present -------------------------------
-# Each of these is a real capability the resume demonstrates without using the taxonomy's
-# word for it. Listing them would be inference, so they are withheld and surfaced here
-# instead. Hand-add any you want counted - that is a two-second edit and it is your call.
+# --- still genuinely absent, and correctly reported as real gaps --------------------
+#   typescript, go, rust, kubernetes, docker, aws, gcp, terraform, spark, kafka, airflow,
+#   cuda, cryptography, threat modeling, pentest, distributed training, fine-tuning, ray
 #
-#   computer vision  - "CNNs, YOLOv8" (YOLOv8 is object detection, but the term is absent)
-#   embedded         - "TinyML deployment on microcontrollers"
-#   instrumentation  - "acquisition and control software for CW EPR and EDMR spectrometers"
-#   dsp              - "digital lock-in amplifier", "adaptive signal averaging", "1/f-aware
-#                      noise detection"
-#   ids              - the resume says "intrusion detection" in full, never the acronym;
-#                      handled as an alias in keywords.py rather than a second entry
+# Two notes on that list:
+#   typescript - the resume has JavaScript, but `javascript` is not IN taxonomy.yaml, so
+#                there is no term to hold and no substitute to name. Add `javascript` to
+#                taxonomy.yaml languages if you want this to read as cosmetic.
+#   distributed training - "Federated Learning" is present and is NOT the same thing.
+#                Also worth noting: `federated learning` is absent from taxonomy.yaml
+#                entirely, so the strongest item on the resume cannot be matched at all.
 #
 # --- traps avoided, recorded so they are not reintroduced ---------------------------
-#   go     - "Go Engine from Scratch" is the BOARD GAME, not the language.
-#   aws    - "$300,000 Amazon-funded" is funding, not Amazon Web Services.
-#   nlp    - RAG and LLM work is present; the term "NLP" is not.
-#   distributed training - "Federated Learning" is present; these are not the same thing.
+#   go   - "Go Engine from Scratch" is the BOARD GAME. Excluded by the ambiguous-term cue
+#          guard, and "go engine" is a stop phrase so it stays excluded.
+#   aws  - "$300,000 Amazon-funded" is funding, not Amazon Web Services.
+#   nlp  - RAG and LLM work is present; the term "NLP" is not. Cosmetic via `nlp: llm`.
+#   dsp  - lock-in amplifiers and signal averaging ARE DSP, but the resume never says
+#          "signal processing". Cosmetic via `dsp: instrumentation`, not claimed outright.

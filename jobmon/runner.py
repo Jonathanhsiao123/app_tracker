@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
-from . import config_loader, normalize, notify, store
+from . import config_loader, ledger, normalize, notify, store
 from .adapters import ats_public
 from .analyze import keywords, variants
 from .filters import eligibility, role
@@ -43,14 +45,71 @@ class RunResult:
     adapters_failed: int = 0
     normalize_dropped: int = 0
     seeded: int = 0
+    retried: int = 0  # delivered this run after a previous run failed to deliver them
     health: list[AdapterHealth] = field(default_factory=list)
+    alerted_ids: list[str] = field(default_factory=list)
+    canaries: list[object] = field(default_factory=list)  # ledger.Canary
 
     def summary(self) -> str:
         return (
             f"fetched={self.fetched} new={self.new} duplicates={self.duplicates} "
             f"alerted={self.alerted} blocked={self.blocked} seeded={self.seeded} "
-            f"normalize_dropped={self.normalize_dropped} adapters_failed={self.adapters_failed}"
+            f"normalize_dropped={self.normalize_dropped} retried={self.retried} "
+            f"adapters_failed={self.adapters_failed}"
         )
+
+
+def run_scheduled(
+    ledger_path: Path = ledger.LEDGER_PATH,
+    health_path: Path = ledger.HEALTH_PATH,
+    db_path: Path | None = None,
+    dry_run: bool = False,
+    seed: bool = False,
+) -> RunResult:
+    """One scheduled pass, with the committed ledger as the only durable state (step 6).
+
+    Order: load ledger -> rebuild cache -> fetch -> diff -> **notify** -> write ledger.
+
+    NOTIFY BEFORE WRITE, always. Writing the ledger before a failed notify loses that
+    alert permanently; a failed write after a successful notify costs one duplicate next
+    run. Bias toward duplicates - so the write is the last thing that happens, and if
+    `notify` raises, the ledger on disk is untouched (T6.3).
+
+    The caller (the workflow) commits the ledger after this returns. A failed commit is
+    also survivable for the same reason: the next run re-alerts, and reports how many.
+    """
+    entries = ledger.load(ledger_path)
+    previous_health = ledger.load_health(health_path)
+
+    with tempfile.TemporaryDirectory(prefix="jobmon-cache-") as tmp:
+        db = db_path or Path(tmp) / "cache.db"
+        conn = store.connect(db)
+        try:
+            store.init_db(conn)
+            restored = ledger.rebuild(conn, entries)
+            log.info("ledger: %d entries restored into the derived cache", restored)
+
+            run_id = ledger.next_run_id(entries, previous_health)
+            result = run(conn, dry_run=dry_run, seed=seed, run_id=run_id)
+
+            # Postings carried over from the ledger that were never delivered: either a
+            # notify failed, or the ledger write/commit after one did (T6.4).
+            result.retried = sum(
+                1
+                for gid in result.alerted_ids
+                if gid in entries and entries[gid].alerted_at is None
+            )
+
+            current = {h.adapter: h.postings_seen for h in result.health}
+            result.canaries = ledger.check_canary(previous_health, current)
+
+            if not dry_run:
+                # Only now, after delivery, is the durable state allowed to move.
+                ledger.save(ledger.from_db(conn), ledger_path)
+                ledger.save_health(ledger.Health(counts=current, last_run_id=run_id), health_path)
+        finally:
+            conn.close()
+    return result
 
 
 def enabled_adapters() -> list[object]:
@@ -67,6 +126,7 @@ def run(
     dry_run: bool = False,
     seed: bool = False,
     adapter: str | None = None,
+    run_id: int | None = None,
 ) -> RunResult:
     """Execute one full pass.
 
@@ -87,7 +147,8 @@ def run(
     result = RunResult()
     cfg = config_loader.load()
     tier = config_loader.tier_companies(cfg)
-    run_id = store.begin_run(conn)
+    if run_id is None:
+        run_id = store.begin_run(conn)
 
     with ats_public.make_client() as client:
         for module in enabled_adapters():
@@ -152,6 +213,7 @@ def run(
             # arrivals. Nothing is sent.
             store.mark_alerted(conn, [p.global_id for p, _ in sendable], datetime.now(UTC))
             result.seeded = len(sendable)
+            result.alerted_ids = []
             return result
 
         if dry_run:
@@ -161,14 +223,17 @@ def run(
             result.alerted = 0
             return result
 
-        result.alerted = _send(client, conn, sendable, tier)
+        result.alerted_ids = _send(client, conn, sendable, tier)
+        result.alerted = len(result.alerted_ids)
     return result
 
 
 def _send(
     client, conn: sqlite3.Connection, sendable: list[tuple[Posting, Analysis]], tier: set[str]
-) -> int:
+) -> list[str]:
     """Tier-1 postings alert individually; everything else goes out as one digest.
+
+    Returns the global_ids actually delivered.
 
     `mark_alerted` runs only for what was actually delivered. A failed send leaves
     `alerted_at` unset so the posting is retried next run rather than lost - one duplicate
@@ -186,7 +251,7 @@ def _send(
         delivered.extend(p.global_id for p, _ in digest)
     if delivered:
         store.mark_alerted(conn, delivered, datetime.now(UTC))
-    return len(delivered)
+    return delivered
 
 
 def _analyze(conn: sqlite3.Connection, posting: Posting, cfg) -> Analysis:

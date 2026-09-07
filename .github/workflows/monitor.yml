@@ -1,40 +1,88 @@
 # Scheduled run (spec 3). GitHub Actions cron in a PRIVATE repo. Every 3 hours - faster
 # is not useful, recruiters do not read a queue in real time.
 #
-# Actions is simpler and free; switch to a systemd timer on a VPS only if secrets
-# management here becomes annoying.
+# Persistence is the committed ledger at state/seen.jsonl (build step 6). The SQLite file
+# is a derived cache, rebuilt from the ledger into a tmpdir every run and thrown away.
+#
+# `actions/cache` was considered and REJECTED: entries evict silently after 7 days idle,
+# and the failure mode is a mass re-alert - thousands of notifications for the quietest
+# possible cause. A committed file is ugly and reliable, which is the trade this project
+# makes everywhere else too.
 name: jobmon
 
 on:
   schedule:
     - cron: "0 */3 * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print alerts instead of sending them"
+        type: boolean
+        default: false
+
+# Two overlapping runs would both rebuild from the same ledger and both alert the same
+# postings. Serialize instead, and never cancel: a cancelled run that already notified but
+# had not yet committed would re-alert next time (T6.8).
+concurrency:
+  group: monitor
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # to commit the ledger
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: pip install -e .
 
-      # TODO: the SQLite file is gitignored and Actions runners are ephemeral, so state
-      # must persist somewhere or every run re-alerts everything. Options, cheapest first:
-      #   1. actions/cache keyed on a constant - simple, occasionally evicted (then a
-      #      duplicate alert storm, which is survivable but loud).
-      #   2. Commit the DB to a private branch - ugly, reliable.
-      #   3. actions/upload-artifact + download-artifact with a long retention.
-      # Pick one before Phase 1 ships; this is the step that decides whether dedup works.
-      - name: Restore database
-        run: echo "TODO"
-
+      # No "restore database" step: there is nothing to restore. The ledger is in the
+      # checkout, and `--ledger` rebuilds the cache from it in a tmpdir.
       - name: Run
+        id: run
         env:
           JOBMON_NTFY_TOPIC: ${{ secrets.JOBMON_NTFY_TOPIC }}
-        run: jobmon run
+        run: |
+          jobmon run --ledger state/seen.jsonl \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
 
-      - name: Persist database
-        if: always()
-        run: echo "TODO"
+      # Ordering is the whole point: `jobmon run` notifies and writes the ledger BEFORE
+      # this step exists. A commit that fails here costs one duplicate alert next run; a
+      # commit that had happened before a failed notify would have lost that alert
+      # permanently. Bias toward duplicates.
+      #
+      # `if: always()` so a canary exit (non-zero, build step 6.4) still commits the
+      # ledger - the postings were delivered, and re-alerting them would be worse than
+      # recording a run that also reported a broken adapter.
+      - name: Commit the ledger
+        if: always() && !inputs.dry_run
+        run: |
+          if git diff --quiet -- state/; then
+            echo "ledger unchanged"
+            exit 0
+          fi
+          git config user.name  "jobmon[bot]"
+          git config user.email "jobmon[bot]@users.noreply.github.com"
+          git add state/
+          git commit -m "jobmon: ledger update $(date -u +%Y-%m-%dT%H:%MZ)"
+          # Another run may have pushed while this one was fetching boards. Rebase rather
+          # than force: both runs' ledger lines are wanted.
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && break
+            echo "rebase attempt ${attempt} failed"
+            sleep 5
+          done
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      # The run exits non-zero on a zero-result canary or an adapter failure, and has
+      # already sent a pipeline alert. This surfaces it in the Actions UI too.
+      - name: Report failure
+        if: failure()
+        run: |
+          echo "::warning::jobmon run reported a problem - check the log above and the" \
+               "pipeline alert on the ntfy topic"

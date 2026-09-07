@@ -9,8 +9,10 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from . import runner, store
+from . import notify, runner, store
+from .adapters import ats_public
 
 SINCE_UNITS = {"h": "hours", "d": "days", "w": "weeks"}
 
@@ -32,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
                               "use once on a fresh database, or the first run notifies you "
                               "about every currently-open posting")
     run_cmd.add_argument("--adapter", help="restrict the sweep to one adapter")
+    run_cmd.add_argument("--ledger", type=Path, default=None,
+                         help="use the committed ledger at this path as the only durable "
+                              "state, rebuilding the SQLite cache in a tmpdir (build "
+                              "step 6). This is the mode the cron workflow runs.")
 
     list_cmd = sub.add_parser("list", help="stored postings, newest first")
     list_cmd.add_argument("--since", default="24h", help="e.g. 24h, 3d, 2w")
@@ -78,8 +84,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.dry_run and args.seed:
         print("--dry-run and --seed are mutually exclusive", file=sys.stderr)
         return 2
-    with _db(args) as conn:
-        result = runner.run(conn, dry_run=args.dry_run, seed=args.seed, adapter=args.adapter)
+    if args.ledger is not None:
+        result = runner.run_scheduled(
+            ledger_path=args.ledger,
+            health_path=args.ledger.parent / "health.json",
+            dry_run=args.dry_run,
+            seed=args.seed,
+        )
+    else:
+        with _db(args) as conn:
+            result = runner.run(conn, dry_run=args.dry_run, seed=args.seed,
+                                adapter=args.adapter)
     for health in result.health:
         state = "ok " if health.ok else "ERR"
         line = (f"  [{state}] {health.adapter}: {health.postings_seen} seen, "
@@ -92,6 +107,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(result.summary())
     if result.seeded:
         print(f"seeded {result.seeded} postings as already-alerted; nothing was sent")
+    if result.retried:
+        print(f"NOTE: {result.retried} postings were re-delivered after an earlier run "
+              f"failed to deliver or commit them")
+    for canary in result.canaries:
+        print(f"CANARY: {canary}", file=sys.stderr)
+    if result.canaries and not args.dry_run:
+        # Build step 6.4: a zero-result regression exits non-zero AND sends a pipeline
+        # alert that cannot be mistaken for a job worth reading.
+        with ats_public.make_client() as client:
+            detail = "\n".join(str(c) for c in result.canaries)
+            notify.send_pipeline_alert(client, f"zero-result regression:\n{detail}")
+        return 1
     return 1 if result.adapters_failed else 0
 
 
@@ -214,8 +241,6 @@ def cmd_init_db(args: argparse.Namespace) -> int:
 
 
 def _db(args: argparse.Namespace):
-    from pathlib import Path
-
     conn = store.connect(Path(args.db))
     store.init_db(conn)
     return conn

@@ -291,3 +291,80 @@ def test_go_inside_an_english_phrase_is_not_the_language(taxonomy, text):
 def test_go_in_a_language_list_is_the_language(taxonomy, text):
     """Real sentences from live postings; all three genuinely want Go."""
     assert "go" in keywords.match(text, "", taxonomy)["languages"]
+
+
+# --- the alias layer, and what it fixed --------------------------------------------
+
+@pytest.mark.parametrize(
+    "text,canonical",
+    [
+        ("Trained a YOLOv8 detector.", "computer vision"),
+        ("Object detection on embedded hardware.", "computer vision"),
+        ("TinyML deployment on microcontrollers.", "embedded"),
+        ("Bare metal firmware for an MCU.", "embedded"),
+        ("Control software for CW EPR spectrometers.", "instrumentation"),
+        ("Built a digital lock-in amplifier.", "instrumentation"),
+        ("Kubernetes/EKS in production.", "kubernetes"),
+        ("Trained a PPO agent.", "reinforcement learning"),
+        ("Measured robustness under evasion attacks.", "adversarial"),
+    ],
+)
+def test_domain_synonyms_resolve_to_the_canonical_term(taxonomy, text, canonical):
+    matched = keywords.match(text, "", taxonomy)
+    assert canonical in {t for terms in matched.values() for t in terms}
+
+
+@pytest.mark.parametrize("term", ["computer vision", "embedded", "instrumentation"])
+def test_previously_withheld_terms_are_now_held(cfg, term):
+    """Each of these cost ~200-500 phantom "real gaps" while withheld as inference. They
+    are now evidenced through ALIASES against the resume text, not guessed."""
+    held = {t for k, v in cfg.skill_inventory.items()
+            if k != "equivalents" and isinstance(v, list) for t in v}
+    assert term in held
+
+
+def test_cpp_is_cosmetic_against_c(taxonomy, inventory):
+    """The single most common gap in the corpus (830 postings). C is a real substitute for
+    a new-grad req listing "C/C++"; delete the equivalents line to make it hard again."""
+    gaps = gaps_for("Strong C++ programming required.", taxonomy, inventory)
+    cpp = [g for g in gaps if g["term"] == "c++"]
+    assert cpp and cpp[0]["type"] == "cosmetic" and cpp[0]["substitute"] == "c"
+
+
+def test_fpga_is_cosmetic_against_verilog(taxonomy, inventory):
+    gaps = gaps_for("FPGA development experience.", taxonomy, inventory)
+    f = [g for g in gaps if g["term"] == "fpga"]
+    assert f and f[0]["type"] == "cosmetic" and f[0]["substitute"] == "verilog"
+
+
+@pytest.mark.parametrize("term", ["typescript", "kubernetes", "aws", "docker", "rust", "go"])
+def test_genuinely_absent_skills_stay_real_gaps(taxonomy, inventory, term):
+    """The equivalents map must not launder a real gap into a cosmetic one."""
+    gaps = gaps_for(f"Experience with {term} programming required.", taxonomy, inventory)
+    hit = [g for g in gaps if g["term"] == term]
+    assert hit and hit[0]["type"] == "real"
+
+
+def test_go_engine_is_the_board_game_not_the_language(taxonomy):
+    """From the resume itself: "Go Engine from Scratch, AlphaGo-Style MCTS"."""
+    text = "Go Engine from Scratch, AlphaGo-Style MCTS. Python, PyTorch. Strong skills."
+    assert "go" not in keywords.match(text, "", taxonomy).get("languages", [])
+
+
+# --- performance: the combined pattern is built once, not per call -----------------
+
+def test_the_compiled_taxonomy_is_cached(taxonomy):
+    """Rebuilding ~100 patterns per posting cost 10.6ms each - 144s over the corpus."""
+    keywords._compiled.cache_clear()
+    for _ in range(50):
+        keywords.match("Python and Kubernetes.", "", taxonomy)
+    info = keywords._compiled.cache_info()
+    assert info.misses == 1
+    assert info.hits == 49
+
+
+def test_match_is_a_single_pass_over_the_document(taxonomy):
+    """One combined alternation, so a long document is scanned once regardless of how
+    many taxonomy terms exist."""
+    combined, _, _, _ = keywords._compiled(keywords._taxonomy_key(taxonomy))
+    assert combined.groups == 1
