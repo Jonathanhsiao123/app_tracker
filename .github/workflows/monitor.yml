@@ -37,6 +37,13 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # No default cap on a hosted runner is 6 hours (GitHub's own ceiling), and
+    # `cancel-in-progress: false` above means every later scheduled tick just queues up
+    # behind whatever is running - a genuinely stuck sweep would starve the monitor for
+    # most of a day before GitHub's own limit ever cut it off. 45 minutes is roughly 4x
+    # a real cold sweep (measured locally: ~10 min over 169 boards), so a normal run
+    # never gets near it.
+    timeout-minutes: 45
     permissions:
       contents: write # to commit the ledger
     steps:

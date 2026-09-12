@@ -23,6 +23,15 @@ log = logging.getLogger(__name__)
 
 MAX_DIGEST_ITEMS = 15  # ntfy truncates long bodies; beyond this, send a count and a slice
 
+# Ceiling on individual pushes in one run. Spec 10 hand-lists ~20 tier-1 COMPANIES, which
+# is not the same as 20 postings: a cold sweep finds 697 open tier-1 roles, and sending 697
+# separate pushes is not an instant alert, it is a phone that has to be put face down. It
+# also walks straight into ntfy.sh's rate limit (60 requests, then one per 5s), so most of
+# them are refused with a 429 and simply do not arrive.
+#
+# Overflow is NOT dropped - it joins the digest, which is one push and is delivered.
+MAX_INSTANT_ALERTS = 20
+
 
 def send_alert(client: httpx.Client, posting: Posting, analysis: Analysis) -> bool:
     """Instant individual alert for a tier-1 posting. Returns delivery success.
@@ -50,7 +59,7 @@ def send_digest(
     """
     if not items:
         return True
-    ordered = sorted(items, key=_digest_rank)
+    ordered = sorted(items, key=digest_rank)
     shown = ordered[:MAX_DIGEST_ITEMS]
     parts = [format_alert(p, a) for p, a in shown]
     if len(ordered) > len(shown):
@@ -63,10 +72,33 @@ def send_digest(
     )
 
 
-def _digest_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, str]:
+ELIGIBILITY_RANK = {"likely_ok": 0, "unknown": 1, "blocked": 2}
+
+
+def digest_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, str]:
     _, analysis = item
-    eligibility = {"likely_ok": 0, "unknown": 1, "blocked": 2}.get(analysis.eligibility, 1)
+    eligibility = ELIGIBILITY_RANK.get(analysis.eligibility, 1)
     return (eligibility, 1 if analysis.degree_gated else 0, analysis.global_id)
+
+
+def instant_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, float, str]:
+    """Which postings are most worth an individual push, best first.
+
+    `digest_rank` breaks ties on `global_id`, i.e. alphabetically by ATS job number. That
+    is fine for ordering a digest you are going to scroll, and wrong for choosing which 20
+    of 697 tier-1 postings get their own notification: it picked a contract recruiting
+    coordinator over a distributed inference role. Variant score is the analyzer's own
+    answer to "how well does this match you", so use it here - as an ordering, never as a
+    suppression rule (spec 6: the filter labels, it does not decide).
+    """
+    _, analysis = item
+    best = max(analysis.variant_scores.values(), default=0.0)
+    return (
+        ELIGIBILITY_RANK.get(analysis.eligibility, 1),
+        1 if analysis.degree_gated else 0,
+        -best,
+        analysis.global_id,
+    )
 
 
 def format_alert(posting: Posting, analysis: Analysis) -> str:

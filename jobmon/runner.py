@@ -35,6 +35,11 @@ log = logging.getLogger(__name__)
 # Outcomes from store.upsert_posting that may alert. Everything else was seen before.
 ALERTABLE_OUTCOMES = frozenset({"new"})
 
+# Share of a board sweep that may fail to parse before it stops being noise and starts
+# being an ATS that changed its schema. Below this, malformed postings are counted and
+# logged; above it, the adapter is reported as unhealthy and the problem is pushed.
+MALFORMED_ALERT_RATIO = 0.05
+
 
 @dataclass(slots=True)
 class RunResult:
@@ -47,6 +52,7 @@ class RunResult:
     blocked: int = 0
     adapters_failed: int = 0
     normalize_dropped: int = 0
+    malformed: int = 0  # raised on the way into the store; skipped, not fatal
     seeded: int = 0
     retried: int = 0  # delivered this run after a previous run failed to deliver them
     health: list[AdapterHealth] = field(default_factory=list)
@@ -57,8 +63,8 @@ class RunResult:
         return (
             f"fetched={self.fetched} new={self.new} duplicates={self.duplicates} "
             f"alerted={self.alerted} blocked={self.blocked} seeded={self.seeded} "
-            f"normalize_dropped={self.normalize_dropped} retried={self.retried} "
-            f"adapters_failed={self.adapters_failed}"
+            f"normalize_dropped={self.normalize_dropped} malformed={self.malformed} "
+            f"retried={self.retried} adapters_failed={self.adapters_failed}"
         )
 
 
@@ -164,16 +170,37 @@ def run(
             if adapter and name != adapter:
                 continue
             started = time.monotonic()
-            seen = failed = dropped = 0
+            seen = failed = dropped = malformed = 0
             error: str | None = None
+            first_bad: str | None = None
             try:
                 for raw in module.fetch(client, cfg.companies):
                     seen += 1
-                    posting = normalize.normalize(raw)
-                    if posting is None:
-                        dropped += 1
+                    # PER-POSTING isolation, inside the per-adapter one. These two lines
+                    # used to sit in the adapter-wide try below, which made a single
+                    # malformed posting out of 13,000 abort the whole sweep: every board
+                    # after it was dropped, the adapter was recorded as failed, and the
+                    # run exited non-zero. In Phase 1 `enabled_adapters()` returns exactly
+                    # one module, so "the adapter failed" and "the run delivered nothing"
+                    # are the same sentence - the independence the comment below promises
+                    # only exists between adapters, and there is only one.
+                    #
+                    # A posting that will not parse is data, not a broken pipeline. Count
+                    # it, keep the other 12,999.
+                    try:
+                        posting = normalize.normalize(raw)
+                        if posting is None:
+                            dropped += 1
+                            continue
+                        outcome = store.upsert_posting(conn, posting, run_id)
+                    except Exception as exc:  # deliberate; see above
+                        malformed += 1
+                        if first_bad is None:
+                            ident = raw.get("id") or raw.get("shortcode") or "?"
+                            first_bad = (f"{raw.get('_company', '?')} {ident}: "
+                                         f"{type(exc).__name__}: {exc}")
+                            log.exception("posting %s could not be stored", ident)
                         continue
-                    outcome = store.upsert_posting(conn, posting, run_id)
                     if outcome == "new":
                         result.new += 1
                     elif outcome == "duplicate":
@@ -182,7 +209,14 @@ def run(
                 error = f"{type(exc).__name__}: {exc}"
                 failed = 1
                 log.exception("adapter %s failed", name)
+            # A few unparseable postings are ordinary internet. A large fraction is a
+            # schema change at one of the ATSes, which is worth a push - and is invisible
+            # to the zero-result canary, because the raw postings still arrive.
+            if malformed and not failed and malformed > seen * MALFORMED_ALERT_RATIO:
+                error = (f"{malformed} of {seen} postings could not be stored "
+                         f"({malformed / seen:.0%}); first: {first_bad}")
             result.fetched += seen
+            result.malformed += malformed
             result.normalize_dropped += dropped
             result.adapters_failed += failed
             health = AdapterHealth(
@@ -244,12 +278,25 @@ def _send(
     """
     delivered: list[str] = []
     digest: list[tuple[Posting, Analysis]] = []
-    for posting, analysis in sendable:
-        if posting.company in tier:
-            if notify.send_alert(client, posting, analysis):
-                delivered.append(posting.global_id)
-        else:
-            digest.append((posting, analysis))
+    instant = [item for item in sendable if item[0].company in tier]
+    digest.extend(item for item in sendable if item[0].company not in tier)
+
+    # Best first, then capped. On a cold sweep `instant` is ~700 postings; sending that
+    # many individual pushes buries the good ones and gets most of them refused by ntfy's
+    # rate limit anyway. The overflow is appended to the digest rather than dropped, so
+    # every posting still goes out and still gets marked alerted.
+    instant.sort(key=notify.instant_rank)
+    if len(instant) > notify.MAX_INSTANT_ALERTS:
+        digest.extend(instant[notify.MAX_INSTANT_ALERTS:])
+        log.info(
+            "%d tier-1 postings: sending %d individually, the rest in the digest",
+            len(instant), notify.MAX_INSTANT_ALERTS,
+        )
+        instant = instant[: notify.MAX_INSTANT_ALERTS]
+
+    for posting, analysis in instant:
+        if notify.send_alert(client, posting, analysis):
+            delivered.append(posting.global_id)
     if digest and notify.send_digest(client, digest, "jobmon digest"):
         delivered.extend(p.global_id for p, _ in digest)
     if delivered:

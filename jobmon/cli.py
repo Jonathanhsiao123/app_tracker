@@ -126,7 +126,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             result = runner.run(conn, dry_run=args.dry_run, seed=args.seed,
                                 adapter=args.adapter)
     for health in result.health:
-        state = "ok " if health.ok else "ERR"
+        state = "ERR" if not health.ok else ("WARN" if health.error else "ok ")
         line = (f"  [{state}] {health.adapter}: {health.postings_seen} seen, "
                 f"{health.duration_ms}ms")
         if health.error:
@@ -154,9 +154,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if result.canaries:
         detail = "\n".join(str(c) for c in result.canaries)
         problems.append(f"zero-result regression:\n{detail}")
-    if result.adapters_failed:
-        detail = "\n".join(f"{h.adapter}: {h.error}" for h in result.health if not h.ok)
-        problems.append(f"adapter failed:\n{detail}")
+    # Driven by `error`, not by `ok`. An adapter that returned postings but could not
+    # parse most of them is recorded ok-with-an-error, and it is exactly the failure the
+    # zero-result canary cannot see.
+    unhealthy = [h for h in result.health if h.error]
+    if unhealthy:
+        detail = "\n".join(f"{h.adapter}: {h.error}" for h in unhealthy)
+        problems.append(f"adapter problem:\n{detail}")
     if not problems:
         return EXIT_OK
     if not args.dry_run and not args.seed:
