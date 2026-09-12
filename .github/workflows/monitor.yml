@@ -8,6 +8,13 @@
 # and the failure mode is a mass re-alert - thousands of notifications for the quietest
 # possible cause. A committed file is ugly and reliable, which is the trade this project
 # makes everywhere else too.
+#
+# WHAT A RED RUN MEANS HERE. A failed Actions run emails you, and this project exists so
+# that the things that reach your phone are job postings. So the run goes red for exactly
+# two causes: the code crashed, or JOBMON_NTFY_TOPIC is missing and there is therefore no
+# other way to tell you anything. Every other problem - a dead adapter, a board that went
+# to zero - is pushed to the ntfy topic by `jobmon run` itself, which exits 3 to say
+# "reported, already delivered, do not turn this red".
 name: jobmon
 
 on:
@@ -43,26 +50,60 @@ jobs:
 
       # No "restore database" step: there is nothing to restore. The ledger is in the
       # checkout, and `--ledger` rebuilds the cache from it in a tmpdir.
+      #
+      # FIRST RUN SEEDS. With no ledger in the checkout, every currently-open posting is
+      # new - over 13,000 on the configured board set (README). `--seed` records them as
+      # already-alerted and sends nothing, so the first delivered alert is a posting that
+      # genuinely appeared after jobmon started watching. This is keyed on the file, not
+      # on a one-time flag, so a lost ledger costs one quiet cycle instead of a flood.
       - name: Run
         id: run
         env:
           JOBMON_NTFY_TOPIC: ${{ secrets.JOBMON_NTFY_TOPIC }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          jobmon run --ledger state/seen.jsonl \
-            ${{ inputs.dry_run && '--dry-run' || '' }}
+          args=(run --ledger state/seen.jsonl)
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          elif [ ! -f state/seen.jsonl ]; then
+            echo "::notice::no ledger at state/seen.jsonl - seeding. This run records" \
+                 "every open posting as already-alerted and sends nothing; the next run" \
+                 "alerts on genuinely new postings only."
+            args+=(--seed)
+            echo "seeded=true" >> "$GITHUB_OUTPUT"
+          fi
+          set +e
+          jobmon "${args[@]}"
+          code=$?
+          set -e
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          # Exit 3 (jobmon.cli.EXIT_PIPELINE_REPORTED): the run completed and pushed the
+          # problem to the ntfy topic. You have already been told, on the channel you
+          # read. Failing the job here would only add an email that says less.
+          if [ "${code}" -eq 3 ]; then
+            echo "::warning::jobmon reported a pipeline problem and pushed it to ntfy;" \
+                 "see the log above. Not failing the run - the alert was delivered."
+            exit 0
+          fi
+          exit "${code}"
 
       # Ordering is the whole point: `jobmon run` notifies and writes the ledger BEFORE
       # this step exists. A commit that fails here costs one duplicate alert next run; a
       # commit that had happened before a failed notify would have lost that alert
       # permanently. Bias toward duplicates.
       #
-      # `if: always()` so a canary exit (non-zero, build step 6.4) still commits the
-      # ledger - the postings were delivered, and re-alerting them would be worse than
-      # recording a run that also reported a broken adapter.
+      # `if: always()` so a run that exited non-zero still commits the ledger - the
+      # postings were delivered, and re-alerting them would be worse than recording a run
+      # that also reported a broken adapter.
       - name: Commit the ledger
         if: always() && !inputs.dry_run
         run: |
-          if git diff --quiet -- state/; then
+          # `git status --porcelain`, NOT `git diff --quiet`. state/ is untracked until the
+          # very first commit lands, and `git diff` does not see untracked files - so the
+          # old check reported "unchanged", skipped the commit, and the ledger could never
+          # come into existence. Every run then started from an empty ledger and re-alerted
+          # from scratch forever. `status --porcelain` reports untracked paths as `??`.
+          if [ -z "$(git status --porcelain -- state/)" ]; then
             echo "ledger unchanged"
             exit 0
           fi
@@ -79,10 +120,11 @@ jobs:
           done
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
-      # The run exits non-zero on a zero-result canary or an adapter failure, and has
-      # already sent a pipeline alert. This surfaces it in the Actions UI too.
+      # Reached only for a crash or a missing topic - the two cases where there is no push
+      # notification, so the red run and its email ARE the notification.
       - name: Report failure
         if: failure()
         run: |
-          echo "::warning::jobmon run reported a problem - check the log above and the" \
-               "pipeline alert on the ntfy topic"
+          echo "::error::jobmon could not complete. Exit code" \
+               "'${{ steps.run.outputs.code }}'. Exit 2 means JOBMON_NTFY_TOPIC is not" \
+               "set as a repository secret; anything else is a crash - read the log above."

@@ -5,10 +5,13 @@
 Single process, run on a schedule. Every 3 hours - faster is not useful, recruiters do not
 read a queue in real time.
 
-Build steps 3, 4 and 5 are wired in: fetch, normalize, dedup, role filter, eligibility,
-keywords, gap list and variant scoring. Build steps 6 (committed ledger) and 7 (tracking,
-curated-repo adapter) are not - `monitor.yml` still has placeholder persistence, so this
-must not run unattended yet.
+Build steps 3, 4, 5 and 6 are wired in: fetch, normalize, dedup, role filter,
+eligibility, keywords, gap list, variant scoring, and the committed ledger that
+`run_scheduled` treats as the only durable state. Build step 7 (tracking, curated-repo
+adapter) is not.
+
+`monitor.yml` runs `run_scheduled` unattended. It reaches you on the ntfy topic and stays
+green for anything it managed to push there - see the exit codes in `cli.py`.
 """
 
 from __future__ import annotations

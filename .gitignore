@@ -14,3 +14,4 @@ __pycache__/
 .env
 
 # Resume PDFs are checked in (spec 9); anything else personal is not.
+*.egg-info/

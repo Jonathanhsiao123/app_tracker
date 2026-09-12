@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,18 @@ from . import notify, runner, store
 from .adapters import ats_public
 
 SINCE_UNITS = {"h": "hours", "d": "days", "w": "weeks"}
+
+# Exit codes, and the reason there is more than one kind of non-zero.
+#
+# A red Actions run emails you. An email saying "jobmon failed" looks exactly like an email
+# saying "jobmon failed" whether the cause is a dead adapter or a crash, and neither is the
+# thing you asked to be told about - postings are. So a run that completed and already
+# pushed the problem to your phone exits PIPELINE_REPORTED, which `monitor.yml` treats as
+# green. Only a genuine crash, or a misconfiguration that leaves NO channel to reach you
+# (EXIT_MISCONFIGURED), is allowed to turn the run red and mail you.
+EXIT_OK = 0
+EXIT_MISCONFIGURED = 2  # nothing ran, and push notification is not available to say so
+EXIT_PIPELINE_REPORTED = 3  # the run finished; the problem went out on the ntfy topic
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,7 +96,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     without opening the DB."""
     if args.dry_run and args.seed:
         print("--dry-run and --seed are mutually exclusive", file=sys.stderr)
-        return 2
+        return EXIT_MISCONFIGURED
+    if not args.dry_run and not args.seed and not os.environ.get("JOBMON_NTFY_TOPIC"):
+        # Checked HERE, before the sweep, and not left to `_post_ntfy` at delivery time.
+        # That refusal is right, but it fires two minutes in, after 169 boards have been
+        # fetched, and it surfaces as a traceback - so the only thing you are told is
+        # "workflow failed", not "you never set the secret". Same refusal, said up front
+        # and in words.
+        print(
+            "JOBMON_NTFY_TOPIC is unset; refusing to run a sweep it cannot deliver.",
+            "  Set it as a repository secret so the cron workflow can send:",
+            "    Settings > Secrets and variables > Actions > New repository secret",
+            "    (or: gh secret set JOBMON_NTFY_TOPIC)",
+            "  The topic is any hard-to-guess string; subscribe to it in the ntfy app.",
+            "  Use --dry-run to print alerts instead of sending them.",
+            sep="\n",
+            file=sys.stderr,
+        )
+        return EXIT_MISCONFIGURED
     if args.ledger is not None:
         result = runner.run_scheduled(
             ledger_path=args.ledger,
@@ -112,14 +142,29 @@ def cmd_run(args: argparse.Namespace) -> int:
               f"failed to deliver or commit them")
     for canary in result.canaries:
         print(f"CANARY: {canary}", file=sys.stderr)
-    if result.canaries and not args.dry_run:
-        # Build step 6.4: a zero-result regression exits non-zero AND sends a pipeline
-        # alert that cannot be mistaken for a job worth reading.
+    # Build step 6.4: a pipeline problem is PUSHED, under a title that cannot be mistaken
+    # for a job worth reading. It goes out on the same channel the postings do, because
+    # that is the channel you actually read.
+    #
+    # An adapter that raised is reported here too. It used to only set the exit code, so
+    # the only notice of a dead adapter was a red Actions run - i.e. an email that says
+    # "workflow failed" and nothing else, which is exactly the notification this project
+    # is supposed to replace.
+    problems: list[str] = []
+    if result.canaries:
+        detail = "\n".join(str(c) for c in result.canaries)
+        problems.append(f"zero-result regression:\n{detail}")
+    if result.adapters_failed:
+        detail = "\n".join(f"{h.adapter}: {h.error}" for h in result.health if not h.ok)
+        problems.append(f"adapter failed:\n{detail}")
+    if not problems:
+        return EXIT_OK
+    if not args.dry_run and not args.seed:
         with ats_public.make_client() as client:
-            detail = "\n".join(str(c) for c in result.canaries)
-            notify.send_pipeline_alert(client, f"zero-result regression:\n{detail}")
-        return 1
-    return 1 if result.adapters_failed else 0
+            notify.send_pipeline_alert(client, "\n\n".join(problems))
+    # Non-zero so it is visible in the log, but a code `monitor.yml` knows means
+    # "delivered, do not turn the run red". See the constants at the top of this file.
+    return EXIT_PIPELINE_REPORTED
 
 
 def cmd_list(args: argparse.Namespace) -> int:
