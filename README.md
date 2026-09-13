@@ -3,10 +3,12 @@
 Job posting monitor for the 2027 New Grad / Summer 2027 Internship cycle (US market).
 See `job-monitor-spec.md` for the authoritative spec.
 
-**Status (2026-09-06): Phase 1 ships.** Fetch, normalize, dedup, role filter and ntfy alerts
-are implemented and tested against 156 live boards. Phase 2 (`filters/eligibility.py`,
-`analyze/keywords.py`) and Phase 3 (`adapters/github_repos.py`, `bigtech/`, apply/funnel)
-are still stubs and raise `NotImplementedError` on purpose.
+**Status (2026-09-12): Phase 1 and 2 ship; Phase 3 is mostly done.** Fetch, normalize,
+dedup, role filter, ntfy alerts, eligibility classification, keyword/variant analysis,
+apply/log/funnel/health tracking, and the curated-repo adapter (`adapters/github_repos.py`,
+covering SimplifyJobs/vanshb03/speedyapply) are all implemented and tested. Only
+`adapters/bigtech/` is still a stub — build only if time remains under the day-7 timebox
+(spec 12); the curated repos are the primary big-tech source regardless (spec 5b).
 
     [source adapters] -> [normalizer] -> [dedup store] -> [filters] -> [analyzer] -> [notifier]
 
@@ -87,10 +89,14 @@ appeared in the last 3 hours and the cap never binds.
   `filters/role.py`, `notify.py`, `runner.py`, `cli.py` — ntfy alerts working end to end.
   Scoped to four ATSes (greenhouse, lever, ashby, workable); smartrecruiters is deferred
   because it is the only one needing pagination plus an N+1 detail fetch.
-- **Phase 2 (day 4):** `filters/eligibility.py`, `sponsorship_overrides.yaml`, `taxonomy.yaml`,
-  `analyze/keywords.py`, `analyze/variants.py`.
-- **Phase 3 (day 7):** `adapters/github_repos.py`, 3-5 modules under `adapters/bigtech/`,
-  apply/funnel tracking.
+- **Phase 2 (day 4): DONE.** `filters/eligibility.py`, `taxonomy.yaml`, `analyze/keywords.py`,
+  `analyze/variants.py`. `sponsorship_overrides.yaml` is wired and beats text classification,
+  but is still empty (`{}`) — it needs the one-evening hand-seeding pass from DOL LCA/PERM
+  disclosure data described in spec 6.
+- **Phase 3 (day 7): 7a and 7b done.** `apply`/`log`/`funnel`/`health` tracking (7a) and
+  `adapters/github_repos.py` (7b, SimplifyJobs + vanshb03 + speedyapply) both ship.
+  `adapters/bigtech/` (7c) is still a stub — build only if time remains; 7b already covers
+  big tech better than a handful of hand-reverse-engineered portals would (spec 5b).
 - **Phase 4:** deferred. Taiwan / China. Design notes only, do not build.
 
 ## Scope discipline

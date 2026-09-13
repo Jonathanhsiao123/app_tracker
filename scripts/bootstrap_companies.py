@@ -152,20 +152,21 @@ def _row_from_cells(cells: list[str], last_company: str, source: str) -> tuple[R
     return Row(company=company, urls=urls, source=source), last_company
 
 
-def iter_rows(text: str, source: str = "") -> Iterator[Row]:
-    """Yield one Row per posting, from HTML <tr> rows or markdown pipe rows.
-
-    A company cell of "?" or a downward arrow inherits the previous row's company, which is
-    how both list formats mark additional roles at the same employer.
+def iter_cell_rows(text: str) -> Iterator[list[str]]:
+    """Yield each table row as its raw (uncleaned) list of cell strings, across both source
+    conventions in use (spec 5c): HTML `<tr>/<td>` (or `<th>`, so a header row comes through
+    like any other) and markdown pipe rows. A markdown separator row (`|---|---|`) is
+    dropped; nothing else is - a header row is ordinary output here, distinguished by its
+    cell text, not filtered out. Reused by `adapters/github_repos.py` (build step 7b) for
+    header-based column mapping, which needs the header row and every cell, not just the
+    company cell and its links.
     """
-    last = ""
     html_rows = _TR.findall(text)
     if html_rows:
         for row in html_rows:
             cells = _TD.findall(row)
             if cells:
-                built, last = _row_from_cells(cells, last, source)
-                yield built
+                yield cells
         return
 
     for line in text.splitlines():
@@ -175,6 +176,17 @@ def iter_rows(text: str, source: str = "") -> Iterator[Row]:
         cells = [c.strip() for c in line.strip("|").split("|")]
         if not cells or all(set(c) <= set("-: ") for c in cells):
             continue  # separator row
+        yield cells
+
+
+def iter_rows(text: str, source: str = "") -> Iterator[Row]:
+    """Yield one Row per posting, from HTML <tr> rows or markdown pipe rows.
+
+    A company cell of "?" or a downward arrow inherits the previous row's company, which is
+    how both list formats mark additional roles at the same employer.
+    """
+    last = ""
+    for cells in iter_cell_rows(text):
         built, last = _row_from_cells(cells, last, source)
         yield built
 

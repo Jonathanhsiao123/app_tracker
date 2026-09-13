@@ -5,10 +5,10 @@
 Single process, run on a schedule. Every 3 hours - faster is not useful, recruiters do not
 read a queue in real time.
 
-Build steps 3, 4, 5 and 6 are wired in: fetch, normalize, dedup, role filter,
-eligibility, keywords, gap list, variant scoring, and the committed ledger that
-`run_scheduled` treats as the only durable state. Build step 7 (tracking, curated-repo
-adapter) is not.
+Build steps 3, 4, 5, 6 and 7a/7b are wired in: fetch, normalize, dedup, role filter,
+eligibility, keywords, gap list, variant scoring, the committed ledger that
+`run_scheduled` treats as the only durable state, and the curated-repo adapter. Build step
+7c (`adapters/bigtech/`) is not - build only if time remains under the day-7 timebox.
 
 `monitor.yml` runs `run_scheduled` unattended. It reaches you on the ntfy topic and stays
 green for anything it managed to push there - see the exit codes in `cli.py`.
@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config_loader, ledger, normalize, notify, store
-from .adapters import ats_public
+from .adapters import ats_public, github_repos
 from .analyze import keywords, variants
 from .filters import eligibility, role
 from .models import AdapterHealth, Analysis, Posting
@@ -50,6 +50,7 @@ class RunResult:
     duplicates: int = 0
     alerted: int = 0
     blocked: int = 0
+    closed: int = 0  # github_repo rows the source itself marked closed; stored, not alerted
     adapters_failed: int = 0
     normalize_dropped: int = 0
     malformed: int = 0  # raised on the way into the store; skipped, not fatal
@@ -62,7 +63,8 @@ class RunResult:
     def summary(self) -> str:
         return (
             f"fetched={self.fetched} new={self.new} duplicates={self.duplicates} "
-            f"alerted={self.alerted} blocked={self.blocked} seeded={self.seeded} "
+            f"alerted={self.alerted} blocked={self.blocked} closed={self.closed} "
+            f"seeded={self.seeded} "
             f"normalize_dropped={self.normalize_dropped} malformed={self.malformed} "
             f"retried={self.retried} adapters_failed={self.adapters_failed}"
         )
@@ -124,10 +126,10 @@ def run_scheduled(
 def enabled_adapters() -> list[object]:
     """The adapter modules to sweep this run.
 
-    A plain list, built by hand. Phase 1 = [ats_public]. Phase 3 adds github_repos and
-    whichever `bigtech` modules are enabled. No plugin discovery (spec 12).
+    A plain list, built by hand (spec 12: no plugin discovery). `bigtech/` adds to this list
+    only if build step 7c ships under the timebox.
     """
-    return [ats_public]
+    return [ats_public, github_repos]
 
 
 def run(
@@ -196,7 +198,8 @@ def run(
                     except Exception as exc:  # deliberate; see above
                         malformed += 1
                         if first_bad is None:
-                            ident = raw.get("id") or raw.get("shortcode") or "?"
+                            ident = (raw.get("id") or raw.get("shortcode")
+                                      or raw.get("apply_url") or "?")
                             first_bad = (f"{raw.get('_company', '?')} {ident}: "
                                          f"{type(exc).__name__}: {exc}")
                             log.exception("posting %s could not be stored", ident)
@@ -242,6 +245,8 @@ def run(
             if not ok:
                 if reason == "blocked":
                     result.blocked += 1
+                elif reason == "closed":
+                    result.closed += 1
                 continue
             sendable.append((posting, analysis))
 

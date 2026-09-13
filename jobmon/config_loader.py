@@ -106,6 +106,9 @@ def _validate_companies(companies: dict[str, Any]) -> None:
             )
         if not isinstance(entry.get("tier", False), bool):
             raise ConfigError(f"{where}: tier must be true or false")
+    for i, entry in enumerate(companies.get("github_repos") or []):
+        if not entry.get("url"):
+            raise ConfigError(f"companies.yaml github_repos[{i}]: missing 'url'")
 
 
 def _validate_skill_inventory(

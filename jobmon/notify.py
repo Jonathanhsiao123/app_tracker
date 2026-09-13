@@ -205,6 +205,9 @@ def should_alert(posting: Posting, analysis: Analysis, tier: set[str]) -> tuple[
       - already alerted               -> suppressed (the runner checks `alerted_at`)
       - duplicate / repost            -> suppressed (the runner checks the upsert outcome)
       - role_class == "experienced"   -> suppressed
+      - raw["closed"] is truthy        -> suppressed (a github_repo row the source itself
+                                          marked closed, spec 5c; still stored, same shape
+                                          as `blocked`)
 
     `unclear` role and `unknown` eligibility ALERT. That is the whole point. Variant score
     is deliberately NOT a suppression rule: a weak recommendation is shown as weak, never
@@ -212,6 +215,8 @@ def should_alert(posting: Posting, analysis: Analysis, tier: set[str]) -> tuple[
     """
     if analysis.eligibility == "blocked":
         return False, "blocked"
+    if posting.raw.get("closed"):
+        return False, "closed"
     if analysis.role_class == "experienced":
         return False, "experienced"
     return True, "tier1" if posting.company in tier else "digest"

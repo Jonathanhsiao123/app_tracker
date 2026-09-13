@@ -4,6 +4,12 @@
 # note:   free text, why
 # checked_on: YYYY-MM-DD           required; a stale check should be visible in the alert
 #
+# KEY IS THE COMPANY DISPLAY NAME (companies.yaml `company:`), NOT the ATS slug.
+# `filters/eligibility.apply_override` matches on a normalized, token-prefix comparison
+# against `Posting.company`, e.g. key "scale ai" matches company "Scale AI Inc" - it does
+# NOT look anything up by slug. A slug-shaped key like "scaleai" or "linkedin3" normalizes
+# to a token that never prefix-matches the real company name and silently never fires.
+#
 # Seeding, once, one evening, for the top ~60 targets (spec 6):
 #   - public H-1B and PERM disclosure data (DOL LCA filings, and the aggregator sites
 #     built on them) -> likely_ok
@@ -22,4 +28,96 @@
 #   note: Consistent H-1B filings in DOL disclosure data.
 #   checked_on: 2026-09-03
 
-{}
+anyscale:
+  status: likely_ok
+  note: Anyscale Inc has an active H-1B filing history (~13 LCAs in FY2025) per DOL LCA disclosure data (h1bgrader).
+  checked_on: 2026-09-12
+
+gecko-robotics:
+  status: likely_ok
+  note: Gecko Robotics Inc filed 10 H-1B LCAs FY2022-2024 and continued filing into FY2025 (2 I-129 petitions approved) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+harvey:
+  status: likely_ok
+  note: Filing entity Counsel AI Corporation (Harvey) shows 9 H-1B LCAs FY2022-2024 and 11 more in H1 FY2025 per DOL LCA disclosure data.
+  checked_on: 2026-09-12
+
+notion:
+  status: likely_ok
+  note: Notion Labs Inc filed 13 H-1B LCAs in FY2026 per DOL LCA disclosure data.
+  checked_on: 2026-09-12
+
+ramp:
+  status: likely_ok
+  note: Ramp Business Corporation has an established multi-year H-1B LCA filing history per DOL disclosure data.
+  checked_on: 2026-09-12
+
+replit:
+  status: likely_ok
+  note: Replit Inc has certified H-1B LCAs (incl. software engineer roles) per DOL LCA disclosure data.
+  checked_on: 2026-09-12
+
+sentry:
+  status: likely_ok
+  note: Filing entity Functional Software Inc (d/b/a Sentry) filed 23 H-1B LCAs and 3 PERM green card cases FY2022-2024 per DOL disclosure data.
+  checked_on: 2026-09-12
+
+skydio:
+  status: likely_ok
+  note: Skydio Inc filed 35 H-1B LCAs in FY2025 for engineering/software roles per DOL LCA disclosure data.
+  checked_on: 2026-09-12
+
+cloudflare:
+  status: likely_ok
+  note: Large public tech company; 664 H-1B LCAs on record (103 in 2025) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+figma:
+  status: likely_ok
+  note: 177 H-1B LCAs on record (59 in FY2025), including software engineer roles, per DOL disclosure data.
+  checked_on: 2026-09-12
+
+scale ai:
+  status: likely_ok
+  note: Scale AI Inc filed ~205 H-1B LCAs total (~80 in FY2025) per DOL LCA disclosure data.
+  checked_on: 2026-09-12
+
+twitch:
+  status: likely_ok
+  note: Amazon subsidiary; 552 H-1B LCAs on record (61 in FY2025) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+verkada:
+  status: likely_ok
+  note: Verkada Inc filed 304 H-1B LCAs FY2022-2024 and continued filing into FY2025 per DOL disclosure data.
+  checked_on: 2026-09-12
+
+palantir:
+  status: likely_ok
+  note: Filed 114 H-1B LCAs in FY2025 for SWE/forward-deployed-engineer/ML roles per DOL data; only clearance-required govt roles are excluded, not the company overall.
+  checked_on: 2026-09-12
+
+woven:
+  status: likely_ok
+  note: Woven By Toyota US Inc filed 71 H-1B LCAs in FY2025 and 25 in FY2026 (software developer/QA roles) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+linkedin:
+  status: likely_ok
+  note: Major public tech company (Microsoft subsidiary); 7,761 H-1B LCAs on record (904 in FY2025) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+servicenow:
+  status: likely_ok
+  note: Major public tech company; 4,175 H-1B LCAs on record (825 in 2025) per DOL disclosure data.
+  checked_on: 2026-09-12
+
+# Researched but NOT added, for lack of solid evidence either way (left as "unknown"):
+#   elevenlabs  - only 1 LCA found under likely entity name (Eleven Labs Inc); too thin to call.
+#   lambda      - AI cloud company's actual filing entity could not be reliably distinguished
+#                 from several similarly-named unrelated "Lambda ..." staffing/IT entities.
+#   zapier      - no LCA filings found in DOL disclosure data; their own "global mobility"
+#                 blog post says they don't promise visa sponsorship, but that's about
+#                 relocating existing remote staff, not a clear statement on new-hire H-1B -
+#                 suggestive but not solid enough to mark blocked.

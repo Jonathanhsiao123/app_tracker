@@ -10,10 +10,11 @@ the description body, so it is the only ATS needing both pagination and an N+1 d
 
 from __future__ import annotations
 
+import hashlib
 import html as _html
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
 
@@ -21,8 +22,8 @@ from .models import Posting, RemoteType
 
 log = logging.getLogger(__name__)
 
-# Parsers wired up for Phase 1. smartrecruiters/recruitee/personio are deliberately absent.
-PARSERS = ("greenhouse", "lever", "ashby", "workable")
+# Parsers wired up so far. smartrecruiters/recruitee/personio are deliberately absent.
+PARSERS = ("greenhouse", "lever", "ashby", "workable", "github_repo")
 
 
 def normalize(raw: dict[str, Any]) -> Posting | None:
@@ -39,6 +40,7 @@ def normalize(raw: dict[str, Any]) -> Posting | None:
         "lever": from_lever,
         "ashby": from_ashby,
         "workable": from_workable,
+        "github_repo": from_github_repo,
     }.get(ats)
     if parser is None:
         log.warning("no parser for source %r; skipping", ats)
@@ -158,16 +160,36 @@ def from_personio(raw: dict[str, Any], company: str) -> Posting:
     raise NotImplementedError("personio is out of scope")
 
 
-def from_github_repo(raw: dict[str, Any]) -> Posting:
-    """A curated-repo table row. PHASE 3 (build step 7b).
+def from_github_repo(raw: dict[str, Any], company: str) -> Posting:
+    """A curated-repo table row (spec 5c, build step 7b).
 
-    TODO: these rows have no description at all - only company, role, location, link. Set
-    `description_text=""` and accept that eligibility lands on `unknown` and the keyword
-    analysis is empty. Optionally follow `apply_url` to the underlying ATS board and reuse
-    the matching `from_*` parser to fill the body in; that is the good version, but it is
-    an extra request per row, so gate it behind tier-1 companies first.
+    These rows carry no description body at all - only company, role, location, an apply
+    link, and a loosely-formatted date. `description_text` is therefore empty, which means
+    eligibility lands on `unknown` (never `blocked` - there is no text to match against) and
+    the keyword analyzer reports nothing. This is the accepted trade-off of this source
+    (spec 5c): it is cheap and direct-to-ATS, not a full posting body. When the same job also
+    exists in `companies.yaml`'s ATS sweep, that Posting carries the real body and the
+    cross-source fuzzy dedup (spec 4) means only one of the two ever reaches an alert.
+
+    `job_id` has no natural identifier here - unlike Greenhouse/Lever/Ashby/Workable, a
+    table row is not issued one - so it is a hash of `apply_url`, the one field that stays
+    stable for a given row run over run (repos edit titles and reorder rows far more often
+    than a posting's own apply link changes).
     """
-    raise NotImplementedError
+    apply_url = _require(raw, "apply_url")
+    title = _require(raw, "title")
+    job_id = hashlib.sha256(apply_url.encode()).hexdigest()[:16]
+    return _build(
+        source="github_repo",
+        company=company,
+        job_id=job_id,
+        title=title,
+        locations=raw.get("locations") or [],
+        description_html="",
+        apply_url=apply_url,
+        posted_at=parse_repo_date(raw.get("posted_text")),
+        raw=raw,
+    )
 
 
 # --- construction -------------------------------------------------------------------
@@ -304,6 +326,33 @@ def parse_remote_type(text: str, locations: list[str]) -> RemoteType | None:
     if _ONSITE.search(haystack):
         return "onsite"
     return None
+
+
+def parse_repo_date(text: str | None) -> datetime | None:
+    """Best-effort parse of a curated repo's date column: either a relative day count
+    ("2d", speedyapply's Age) or a bare "Mon DD" with no year (vanshb03's Date Posted).
+    Returns None rather than guessing when the format is unrecognized - `first_seen_at` is
+    what actually drives alert timing regardless of whether this parses.
+
+    A "Mon DD" with no year is inherently ambiguous near a year boundary: if reading it
+    against the current year lands in the future, it must mean last year instead.
+    """
+    if not text:
+        return None
+    text = text.strip()
+    m = _AGE_DAYS.match(text)
+    if m:
+        return datetime.now(UTC) - timedelta(days=int(m.group(1)))
+    try:
+        parsed = datetime.strptime(text, "%b %d").replace(year=datetime.now(UTC).year, tzinfo=UTC)
+    except ValueError:
+        return None
+    if parsed > datetime.now(UTC) + timedelta(days=1):
+        parsed = parsed.replace(year=parsed.year - 1)
+    return parsed
+
+
+_AGE_DAYS = re.compile(r"^(\d+)\s*d$", re.IGNORECASE)
 
 
 def parse_datetime(value: Any) -> datetime | None:

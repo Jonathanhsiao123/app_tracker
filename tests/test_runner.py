@@ -4,11 +4,13 @@ No network and no notifications - the adapter and the notifier are both replaced
 under test is the wiring: what gets alerted, what gets suppressed, what survives a failure.
 """
 
+import hashlib
 from datetime import UTC, datetime
 
 import pytest
 
 from jobmon import runner, store
+from jobmon.models import Posting
 
 
 @pytest.fixture
@@ -30,6 +32,29 @@ def greenhouse_job(job_id, title="Software Engineer, New Grad", body="<p>Build t
         "location": {"name": "NYC"},
         "updated_at": "2026-09-01T00:00:00Z",
     }
+
+
+def github_repo_job(apply_url, title="Software Engineer, New Grad", company="Acme",
+                     locations=("NYC",), closed=False):
+    return {
+        "_ats": "github_repo",
+        "_company": company,
+        "company": company,
+        "title": title,
+        "locations": list(locations),
+        "apply_url": apply_url,
+        "posted_text": "0d",
+        "closed": closed,
+        "repo_kind": "new_grad",
+        "source_repo": "https://example/repo",
+    }
+
+
+def github_repo_global_id(company, apply_url):
+    """`from_github_repo` hashes `apply_url` for the id (no natural one exists); mirrored
+    here so a test can look the stored posting up without reaching into normalize.py."""
+    job_id = hashlib.sha256(apply_url.encode()).hexdigest()[:16]
+    return Posting.make_global_id("github_repo", company, job_id)
 
 
 class FakeAdapter:
@@ -97,6 +122,24 @@ def test_health_row_is_recorded_every_run(conn, wire):
     assert result.health[0].ok is True
     assert result.health[0].postings_seen == 1
     assert store.health_report(conn)[0].adapter == "fake"
+
+
+def test_cross_source_dedup_github_repo_and_ats_board(conn, wire):
+    """T7.5: the same job reachable both through a curated repo and through the ATS sweep
+    must alert once, not twice. The secondary fuzzy dedup key is (company, normalized
+    title, first location) - it does not care which adapter produced either row, so one
+    `FakeAdapter` yielding both raw shapes in the same run is a faithful stand-in for two
+    real adapters finding the same posting."""
+    sent = wire(FakeAdapter([
+        greenhouse_job(1),  # Acme, "Software Engineer, New Grad", NYC
+        github_repo_job("https://jobs.lever.co/acme/dup", company="Acme",
+                         title="Software Engineer, New Grad", locations=("NYC",)),
+    ]))
+    result = runner.run(conn)
+    assert result.new == 1
+    assert result.duplicates == 1
+    assert result.alerted == 1
+    assert len(sent["digests"][0]) == 1
 
 
 # --- failed delivery must be retried, not lost -------------------------------------
@@ -172,6 +215,28 @@ def test_suppressed_posting_is_still_stored(conn, wire):
     wire(FakeAdapter([greenhouse_job(1, title="Staff Software Engineer")]))
     runner.run(conn)
     assert store.get_posting(conn, "greenhouse:acme:1") is not None
+
+
+def test_closed_github_repo_row_is_suppressed_but_stored(conn, wire):
+    """The `closed` flag a github_repo row carries (build step 7b) suppresses the same way
+    `blocked` does - stored, counted, not sent."""
+    url = "https://jobs.lever.co/acme/closed-1"
+    sent = wire(FakeAdapter([github_repo_job(url, closed=True)]))
+    result = runner.run(conn)
+    assert result.new == 1
+    assert result.closed == 1
+    assert result.alerted == 0
+    assert sent["digests"] == []
+    assert store.get_posting(conn, github_repo_global_id("Acme", url)) is not None
+
+
+def test_open_github_repo_row_alerts_normally(conn, wire):
+    url = "https://jobs.lever.co/acme/open-1"
+    sent = wire(FakeAdapter([github_repo_job(url, closed=False)]))
+    result = runner.run(conn)
+    assert result.closed == 0
+    assert result.alerted == 1
+    assert sent["digests"][0] == [github_repo_global_id("Acme", url)]
 
 
 # --- adapter failure is independent ------------------------------------------------

@@ -310,6 +310,15 @@ COMMANDS = {
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point. A failed run exits non-zero so the Actions cron surfaces it."""
+    # Posting titles now come straight from free-text READMEs (github_repos, build step
+    # 7b) and routinely carry emoji ("Engineering Intern \U0001f393"). GitHub Actions'
+    # ubuntu runner is UTF-8 by default, but a local Windows console (cp1252) is not, and
+    # `print()` hitting one crashed the whole run - `--dry-run` on a real fetch, not a
+    # synthetic test, is what surfaced this. Replace what the console can't render rather
+    # than raise; reconfigure is a no-op on an already-UTF-8 stream.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

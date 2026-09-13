@@ -3,7 +3,7 @@
 Payload fixtures are trimmed copies of live responses captured 2026-09-06.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -250,3 +250,88 @@ def test_parse_remote_type(text, locations, expected):
 def test_global_id_is_stable_across_company_spellings():
     assert Posting.make_global_id("greenhouse", "Acme, Inc.", "1") == \
            Posting.make_global_id("greenhouse", "ACME", "1")
+
+
+# --- from_github_repo (build step 7b) -----------------------------------------------
+
+def _repo_raw(**overrides):
+    raw = {
+        "company": "Acme",
+        "title": "Software Engineer Intern",
+        "locations": ["NYC"],
+        "apply_url": "https://jobs.lever.co/acme/1",
+        "posted_text": "2d",
+    }
+    raw.update(overrides)
+    return raw
+
+
+def test_from_github_repo_builds_a_posting_with_no_description():
+    """These table rows carry no body at all (spec 5c) - eligibility must land on
+    `unknown`, never `blocked`, because there is no text to match a blocking phrase in."""
+    posting = normalize.from_github_repo(_repo_raw(), "Acme")
+    assert posting.source == "github_repo"
+    assert posting.description_html == ""
+    assert posting.description_text == ""
+    assert posting.locations == ["NYC"]
+    assert posting.apply_url == "https://jobs.lever.co/acme/1"
+
+
+def test_from_github_repo_job_id_is_a_stable_hash_of_apply_url():
+    """No natural id exists for a table row. The hash must be the same across two rows
+    that share one apply_url (a repost with an edited title) and different across two
+    different apply_urls, or a run-over-run title edit would look like a brand new posting
+    and re-alert."""
+    a = normalize.from_github_repo(_repo_raw(title="Old Title"), "Acme")
+    b = normalize.from_github_repo(_repo_raw(title="New Title"), "Acme")
+    assert a.global_id == b.global_id
+    c = normalize.from_github_repo(_repo_raw(apply_url="https://jobs.lever.co/acme/2"), "Acme")
+    assert c.global_id != a.global_id
+
+
+def test_from_github_repo_requires_apply_url():
+    with pytest.raises(KeyError):
+        normalize.from_github_repo(_repo_raw(apply_url=""), "Acme")
+
+
+def test_from_github_repo_requires_title():
+    with pytest.raises(KeyError):
+        normalize.from_github_repo(_repo_raw(title=""), "Acme")
+
+
+def test_from_github_repo_dispatches_through_normalize():
+    raw = {**_repo_raw(), "_ats": "github_repo", "_company": "Acme"}
+    posting = normalize.normalize(raw)
+    assert posting is not None
+    assert posting.source == "github_repo"
+
+
+# --- parse_repo_date -----------------------------------------------------------------
+
+def test_parse_repo_date_relative_day_count():
+    result = normalize.parse_repo_date("3d")
+    expected = datetime.now(UTC) - timedelta(days=3)
+    assert abs((result - expected).total_seconds()) < 5
+
+
+def test_parse_repo_date_absolute_month_day_uses_current_year():
+    now = datetime.now(UTC)
+    result = normalize.parse_repo_date(now.strftime("%b %d"))
+    assert (result.month, result.day) == (now.month, now.day)
+
+
+def test_parse_repo_date_rolls_back_a_year_when_the_bare_date_would_be_in_the_future():
+    """"Mon DD" carries no year. A date that would land in the future if read against the
+    current year must mean last year instead - the source only writes these once the
+    posting already exists."""
+    future = datetime.now(UTC) + timedelta(days=10)
+    result = normalize.parse_repo_date(future.strftime("%b %d"))
+    assert result.year == future.year - 1
+
+
+def test_parse_repo_date_unrecognized_format_returns_none():
+    assert normalize.parse_repo_date("sometime last week") is None
+
+
+def test_parse_repo_date_none_input_returns_none():
+    assert normalize.parse_repo_date(None) is None
