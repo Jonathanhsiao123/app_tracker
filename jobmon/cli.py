@@ -235,14 +235,22 @@ def cmd_apply(args: argparse.Namespace) -> int:
     """`jobmon apply <global_id> --variant mle`. Records date and variant.
     This marks that YOU applied. The system never applies on your behalf (spec 1)."""
     with _db(args) as conn:
-        store.record_application(conn, args.global_id, args.variant, datetime.now(UTC),
-                                 args.note)
+        try:
+            store.record_application(conn, args.global_id, args.variant, datetime.now(UTC),
+                                     args.note)
+        except store.ApplicationError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     return 0
 
 
 def cmd_log(args: argparse.Namespace) -> int:
     with _db(args) as conn:
-        store.record_event(conn, args.global_id, args.status, datetime.now(UTC), args.note)
+        try:
+            store.record_event(conn, args.global_id, args.status, datetime.now(UTC), args.note)
+        except store.ApplicationError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     return 0
 
 
@@ -251,8 +259,16 @@ def cmd_funnel(args: argparse.Namespace) -> int:
     decides whether the volume strategy is working."""
     with _db(args) as conn:
         report = store.funnel_report(conn)
-    for key, value in report.items():
-        print(f"{key}: {value}")
+    print(f"applications sent: {report['applications_sent']}")
+    print(f"callbacks:         {report['callbacks']}")
+    print(f"conversion rate:   {report['conversion_rate']}%")
+    for label, breakdown in (("variant", report["by_variant"]), ("function", report["by_function"])):
+        if not breakdown:
+            continue
+        print(f"\nby {label}:")
+        for key, stats in breakdown.items():
+            print(f"  {key:<12} applied={stats['applied']:<4} "
+                  f"callbacks={stats['callbacks']:<4} rate={stats['conversion_rate']}%")
     return 0
 
 

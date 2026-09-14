@@ -349,26 +349,150 @@ def get_analysis(conn: sqlite3.Connection, global_id: str) -> Analysis | None:
     )
 
 
-# --- application tracking (spec 11, PHASE 3) ----------------------------------------
+# --- application tracking (spec 11, build step 7a) ----------------------------------
+#
+# This is the tracker half of the project (spec 11): the monitor already has every
+# posting record, so `apply`/`log` just add a fact on top of one, and `funnel` is the one
+# report that decides whether the volume strategy is working. Nothing here alerts,
+# schedules, or touches the ledger - it is pure bookkeeping on rows the pipeline already
+# wrote.
+
+CALLBACK_STATUSES = frozenset({"screen", "onsite", "offer"})  # a real response, not silence
+
+
+class ApplicationError(ValueError):
+    """`apply`/`log` cannot proceed cleanly: unknown `global_id`, or a posting already
+    marked applied. Raised instead of letting a raw `sqlite3.IntegrityError` surface, so
+    the CLI can print something a mistyped global_id actually explains (T7.1)."""
+
 
 def record_application(
     conn: sqlite3.Connection, global_id: str, variant: str, at: datetime, note: str | None = None
 ) -> None:
-    """`jobmon apply <global_id> --variant mle`. PHASE 3 (build step 7a)."""
-    raise NotImplementedError("application tracking is build step 7a")
+    """`jobmon apply <global_id> --variant mle` (spec 1, 11).
+
+    Refuses a second `apply` on the same posting rather than silently no-op-ing or adding a
+    second row (T7.2): `funnel` counts `applications` 1:1 against `postings`, so a duplicate
+    row would inflate "applications sent" and quietly skew the one number the report exists
+    to protect (spec 11) - a fat-fingered repeat of the same global_id should be visible,
+    not swallowed.
+    """
+    if get_posting(conn, global_id) is None:
+        raise ApplicationError(f"no posting with global_id {global_id!r}")
+    existing = conn.execute(
+        "SELECT applied_at, variant FROM applications WHERE global_id = ?", (global_id,)
+    ).fetchone()
+    if existing is not None:
+        raise ApplicationError(
+            f"{global_id} was already marked applied on {existing['applied_at']} "
+            f"(variant {existing['variant']!r}) - not recorded again"
+        )
+    conn.execute(
+        "INSERT INTO applications (global_id, variant, applied_at, note) VALUES (?,?,?,?)",
+        (global_id, variant, _iso(at), note),
+    )
+    conn.commit()
 
 
 def record_event(
     conn: sqlite3.Connection, global_id: str, status: ApplicationStatus, at: datetime,
     note: str | None = None,
 ) -> None:
-    """`jobmon log <global_id> --status ...`. PHASE 3 (build step 7a). Append-only."""
-    raise NotImplementedError("application tracking is build step 7a")
+    """`jobmon log <global_id> --status screen|reject|onsite|offer` (spec 11).
+
+    Append-only: `application_events` has no primary key on `global_id`, so a posting can
+    move through several stages (screen, then onsite, then offer) and every one is kept -
+    `funnel` reads "did this posting ever reach a callback status", not just the latest one.
+
+    Requires a prior `apply`: advancing a funnel stage for a posting you never recorded as
+    applied-to is almost certainly the wrong global_id, and failing here is cheaper than a
+    `funnel` report that counts a callback against zero applications.
+    """
+    if get_posting(conn, global_id) is None:
+        raise ApplicationError(f"no posting with global_id {global_id!r}")
+    applied = conn.execute(
+        "SELECT 1 FROM applications WHERE global_id = ?", (global_id,)
+    ).fetchone()
+    if applied is None:
+        raise ApplicationError(
+            f"{global_id} has no recorded application - `jobmon apply` it first"
+        )
+    conn.execute(
+        "INSERT INTO application_events (global_id, status, occurred_at, note) "
+        "VALUES (?,?,?,?)",
+        (global_id, status, _iso(at), note),
+    )
+    conn.commit()
 
 
 def funnel_report(conn: sqlite3.Connection) -> dict[str, object]:
-    """The one report the tracking exists for (spec 11). PHASE 3 (build step 7a)."""
-    raise NotImplementedError("funnel is build step 7a")
+    """Applications sent, callbacks, and conversion rate, overall and split by variant and
+    by function (spec 11) - the number that decides whether the volume strategy is
+    working, not just a count of what got sent.
+
+    A "callback" is a posting with at least one event in `CALLBACK_STATUSES` - a straight
+    `reject` with nothing else logged is not one. Counted per distinct posting, not per
+    event, so logging screen-then-onsite for one posting is one callback, not two.
+
+    `function` is multi-label (spec 4: `["swe", "mle"]` is normal), so one application can
+    count toward more than one function bucket; that mirrors how keywords and gaps already
+    treat it, and a single split-by-function total is not expected to sum to
+    `applications_sent`.
+    """
+    applications = conn.execute(
+        "SELECT global_id, variant FROM applications"
+    ).fetchall()
+    if not applications:
+        return {
+            "applications_sent": 0,
+            "callbacks": 0,
+            "conversion_rate": 0.0,
+            "by_variant": {},
+            "by_function": {},
+        }
+
+    callback_ids = {
+        row["global_id"]
+        for row in conn.execute(
+            f"SELECT DISTINCT global_id FROM application_events "
+            f"WHERE status IN ({','.join('?' * len(CALLBACK_STATUSES))})",
+            tuple(CALLBACK_STATUSES),
+        ).fetchall()
+    }
+
+    by_variant: dict[str, list[int]] = {}  # variant -> [applied, callbacks]
+    by_function: dict[str, list[int]] = {}
+    for row in applications:
+        gid, variant = row["global_id"], row["variant"]
+        got_callback = gid in callback_ids
+        bucket = by_variant.setdefault(variant, [0, 0])
+        bucket[0] += 1
+        bucket[1] += int(got_callback)
+
+        analysis = get_analysis(conn, gid)
+        for fn in (analysis.function if analysis else []):
+            bucket = by_function.setdefault(fn, [0, 0])
+            bucket[0] += 1
+            bucket[1] += int(got_callback)
+
+    def _rate(applied: int, callbacks: int) -> float:
+        return round(callbacks / applied * 100, 1) if applied else 0.0
+
+    total_applied = len(applications)
+    total_callbacks = sum(1 for row in applications if row["global_id"] in callback_ids)
+    return {
+        "applications_sent": total_applied,
+        "callbacks": total_callbacks,
+        "conversion_rate": _rate(total_applied, total_callbacks),
+        "by_variant": {
+            v: {"applied": a, "callbacks": c, "conversion_rate": _rate(a, c)}
+            for v, (a, c) in by_variant.items()
+        },
+        "by_function": {
+            f: {"applied": a, "callbacks": c, "conversion_rate": _rate(a, c)}
+            for f, (a, c) in by_function.items()
+        },
+    }
 
 
 # --- adapter health (spec 5b, 10) ---------------------------------------------------
