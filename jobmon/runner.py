@@ -2,8 +2,7 @@
 
     [source adapters] -> [normalizer] -> [dedup store] -> [filters] -> [analyzer] -> [notifier]
 
-Single process, run on a schedule. Every 3 hours - faster is not useful, recruiters do not
-read a queue in real time.
+Single process, run hourly so recent openings reach the batch promptly.
 
 Build steps 3, 4, 5, 6 and 7a/7b are wired in: fetch, normalize, dedup, role filter,
 eligibility, keywords, gap list, variant scoring, the committed ledger that
@@ -21,7 +20,7 @@ import sqlite3
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import config_loader, ledger, normalize, notify, store
@@ -39,6 +38,7 @@ ALERTABLE_OUTCOMES = frozenset({"new"})
 # being an ATS that changed its schema. Below this, malformed postings are counted and
 # logged; above it, the adapter is reported as unhealthy and the problem is pushed.
 MALFORMED_ALERT_RATIO = 0.05
+RECENT_OPENING_WINDOW = timedelta(hours=24)
 
 
 @dataclass(slots=True)
@@ -238,6 +238,11 @@ def run(
         # posting whose delivery failed last run is stored and no longer new; keying off
         # the outcome would drop it forever instead of retrying it.
         pending = store.unalerted_postings(conn, run_id)
+        cutoff = datetime.now(UTC) - RECENT_OPENING_WINDOW
+        pending = [
+            posting for posting in pending
+            if (posting.posted_at or posting.first_seen_at) >= cutoff
+        ]
         sendable: list[tuple[Posting, Analysis]] = []
         for posting in pending:
             analysis = _analyze(conn, posting, cfg)
@@ -273,7 +278,7 @@ def run(
 def _send(
     client, conn: sqlite3.Connection, sendable: list[tuple[Posting, Analysis]], tier: set[str]
 ) -> list[str]:
-    """Tier-1 postings alert individually; everything else goes out as one digest.
+    """Send every eligible opening in one batch, ordered newest-first.
 
     Returns the global_ids actually delivered.
 
@@ -282,28 +287,8 @@ def _send(
     costs less than one missed posting.
     """
     delivered: list[str] = []
-    digest: list[tuple[Posting, Analysis]] = []
-    instant = [item for item in sendable if item[0].company in tier]
-    digest.extend(item for item in sendable if item[0].company not in tier)
-
-    # Best first, then capped. On a cold sweep `instant` is ~700 postings; sending that
-    # many individual pushes buries the good ones and gets most of them refused by ntfy's
-    # rate limit anyway. The overflow is appended to the digest rather than dropped, so
-    # every posting still goes out and still gets marked alerted.
-    instant.sort(key=notify.instant_rank)
-    if len(instant) > notify.MAX_INSTANT_ALERTS:
-        digest.extend(instant[notify.MAX_INSTANT_ALERTS:])
-        log.info(
-            "%d tier-1 postings: sending %d individually, the rest in the digest",
-            len(instant), notify.MAX_INSTANT_ALERTS,
-        )
-        instant = instant[: notify.MAX_INSTANT_ALERTS]
-
-    for posting, analysis in instant:
-        if notify.send_alert(client, posting, analysis):
-            delivered.append(posting.global_id)
-    if digest and notify.send_digest(client, digest, "jobmon digest"):
-        delivered.extend(p.global_id for p, _ in digest)
+    if sendable and notify.send_digest(client, sendable, "jobmon digest"):
+        delivered.extend(p.global_id for p, _ in sendable)
     if delivered:
         store.mark_alerted(conn, delivered, datetime.now(UTC))
     return delivered

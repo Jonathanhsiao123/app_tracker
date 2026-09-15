@@ -12,7 +12,7 @@ covering SimplifyJobs/vanshb03/speedyapply) are all implemented and tested. Only
 
     [source adapters] -> [normalizer] -> [dedup store] -> [filters] -> [analyzer] -> [notifier]
 
-Single Python process, run on a schedule (GitHub Actions cron, every 3 hours). No services,
+Single Python process, run on an hourly schedule (GitHub Actions cron). No services,
 no queues, no containers. The system never applies on your behalf.
 
 ## Quick start
@@ -31,7 +31,7 @@ Skip it and the first cron run pushes your entire backlog to your phone.
 
 ## Running it on GitHub Actions
 
-`.github/workflows/monitor.yml` runs one pass every 3 hours. Two things have to be true or
+`.github/workflows/monitor.yml` runs one pass every hour. Two things have to be true or
 it cannot notify you:
 
 1. **Set the `JOBMON_NTFY_TOPIC` repository secret.** Settings > Secrets and variables >
@@ -60,7 +60,7 @@ competing with the alerts this project exists to send.
 
 ### Email delivery
 
-Every job alert and digest can also be delivered by SMTP. Push delivery remains enabled;
+Every hourly batch can also be delivered by SMTP. Push delivery remains enabled;
 when SMTP is configured, both channels must succeed before a posting is marked alerted.
 Set these GitHub Actions secrets to enable it:
 
@@ -73,16 +73,9 @@ environment variables in the shell before `jobmon run`.
 
 ## How much reaches your phone
 
-Tier-1 companies alert individually, everything else is batched into one digest - but the
-individual alerts are capped at `notify.MAX_INSTANT_ALERTS` (20) per run. Spec 10 hand-lists
-about 20 tier-1 *companies*, which is not 20 *postings*: a cold sweep of the configured
-boards finds 697 open tier-1 roles, and 697 separate pushes is not an instant alert. It also
-exceeds ntfy.sh's rate limit (60 requests, then one per 5s), so most of them would be
-refused with a 429 and never arrive. Anything over the cap joins the digest, so nothing is
-dropped - it is batched.
-
-In steady state, with the ledger committed, a run alerts on the handful of postings that
-appeared in the last 3 hours and the cap never binds.
+Each hourly run sends one batch containing eligible openings released within the last 24
+hours, ordered newest first. The email subject is `Jobmon Opening Workflow`; its HTML view
+groups openings by function and embeds the application URL in the job title.
 
 ## Commands
 

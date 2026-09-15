@@ -30,7 +30,7 @@ def greenhouse_job(job_id, title="Software Engineer, New Grad", body="<p>Build t
         "content": body,
         "absolute_url": f"https://boards.greenhouse.io/acme/jobs/{job_id}",
         "location": {"name": "NYC"},
-        "updated_at": "2026-09-01T00:00:00Z",
+        "updated_at": datetime.now(UTC).isoformat(),
     }
 
 

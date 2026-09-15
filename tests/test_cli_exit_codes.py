@@ -203,9 +203,8 @@ def test_a_wholesale_parse_failure_is_reported(
 
 # --- a cold sweep must not try to push 697 times ------------------------------------
 
-def test_instant_alerts_are_capped_and_the_overflow_joins_the_digest(monkeypatch, conn_tier):
-    """A cold sweep finds ~700 open tier-1 roles. Sending one push each buries the good
-    ones and gets most refused by ntfy's rate limit; nothing may be dropped, though."""
+def test_all_openings_are_sent_in_one_digest(monkeypatch, conn_tier):
+    """A cold sweep is delivered as one batch so no opening needs an individual push."""
     from datetime import UTC, datetime
 
     from jobmon import notify, store
@@ -234,31 +233,29 @@ def test_instant_alerts_are_capped_and_the_overflow_joins_the_digest(monkeypatch
 
     delivered = runner._send(None, conn_tier, sendable, {"Acme"})
 
-    assert calls["alerts"] == notify.MAX_INSTANT_ALERTS == 20
-    assert calls["digests"] == [30], "the other 30 are batched, not dropped"
+    assert calls["alerts"] == 0
+    assert calls["digests"] == [50]
     assert len(delivered) == 50, "every posting is still marked alerted"
 
 
-def test_the_capped_alerts_are_the_best_matches_not_the_alphabetical_ones():
-    """`digest_rank` ties on global_id, so capping on it picked postings by ATS job
-    number. On the real board set that surfaced a contract recruiting coordinator."""
+def test_digest_orders_newest_openings_first():
     from jobmon import notify
-    from jobmon.models import Analysis
+    from jobmon.models import Analysis, Posting
 
-    def item(gid, score):
+    def item(gid, posted_at):
+        posting = Posting(
+            global_id=gid, source="greenhouse", company="Acme", title=gid,
+            locations=["NYC"], description_html="", description_text="", apply_url="https://x",
+            first_seen_at=posted_at, last_seen_at=posted_at, posted_at=posted_at,
+        )
         analysis = Analysis(
             global_id=gid, role_class="new_grad", function=["swe"],
             eligibility="likely_ok", eligibility_evidence=[], keywords={}, gaps=[],
-            recommended_variant="swe", variant_scores={"swe": score},
+            recommended_variant="swe", variant_scores={},
         )
-        return (None, analysis)
+        return (posting, analysis)
 
-    weak_but_first = item("gh:acme:0001", 0.10)
-    strong_but_last = item("gh:acme:9999", 0.90)
-
-    ranked = sorted([weak_but_first, strong_but_last], key=notify.instant_rank)
-    assert ranked[0] is strong_but_last
-
-    # Eligibility still outranks score: a blocked posting never jumps a likely_ok one.
-    ranked = sorted([weak_but_first, strong_but_last], key=notify.digest_rank)
-    assert ranked[0] is weak_but_first, "digest ordering is unchanged"
+    old = item("gh:acme:0001", datetime(2026, 9, 14, tzinfo=UTC))
+    recent = item("gh:acme:9999", datetime(2026, 9, 15, tzinfo=UTC))
+    ranked = sorted([old, recent], key=notify.digest_rank)
+    assert ranked[0] is recent

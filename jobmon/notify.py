@@ -4,7 +4,7 @@ Transport: an ntfy.sh topic or a Telegram bot. Both are a few lines and free.
 Email is optional and uses SMTP when configured. The ntfy path remains the push channel.
 
   Tier 1 companies (hand-listed, ~20): instant individual alert.
-  Everything else:                     batched digest, twice daily.
+    Every eligible opening:              one hourly batch.
 """
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+from collections import defaultdict
 from email.message import EmailMessage
+from html import escape
 
 import httpx
 
@@ -23,17 +25,7 @@ NTFY_SERVER = os.environ.get("JOBMON_NTFY_SERVER", "https://ntfy.sh")
 
 log = logging.getLogger(__name__)
 
-MAX_DIGEST_ITEMS = 15  # ntfy truncates long bodies; beyond this, send a count and a slice
-
-# Ceiling on individual pushes in one run. Spec 10 hand-lists ~20 tier-1 COMPANIES, which
-# is not the same as 20 postings: a cold sweep finds 697 open tier-1 roles, and sending 697
-# separate pushes is not an instant alert, it is a phone that has to be put face down. It
-# also walks straight into ntfy.sh's rate limit (60 requests, then one per 5s), so most of
-# them are refused with a 429 and simply do not arrive.
-#
-# Overflow is NOT dropped - it joins the digest, which is one push and is delivered.
-MAX_INSTANT_ALERTS = 20
-
+EMAIL_SUBJECT = "Jobmon Opening Workflow"
 
 def send_alert(client: httpx.Client, posting: Posting, analysis: Analysis) -> bool:
     """Instant individual alert for a tier-1 posting. Returns delivery success.
@@ -45,7 +37,7 @@ def send_alert(client: httpx.Client, posting: Posting, analysis: Analysis) -> bo
     body = format_alert(posting, analysis)
     return _deliver(
         client,
-        title=f"{posting.company}: {posting.title}",
+        title=EMAIL_SUBJECT,
         body=body,
         priority=priority,
         click_url=posting.apply_url,
@@ -55,23 +47,20 @@ def send_alert(client: httpx.Client, posting: Posting, analysis: Analysis) -> bo
 def send_digest(
     client: httpx.Client, items: list[tuple[Posting, Analysis]], label: str
 ) -> bool:
-    """Batched digest for everything outside tier 1, twice daily.
+    """Deliver one batch containing every eligible opening from this run.
 
-    Sorted so the postings worth reading first are first: explicit sponsorship, then
-    unknown, then degree-gated last. Blocked postings never reach here.
+    Openings are ordered newest-first and grouped by role/function in the email.
     """
     if not items:
         return True
     ordered = sorted(items, key=digest_rank)
-    shown = ordered[:MAX_DIGEST_ITEMS]
-    parts = [format_alert(p, a) for p, a in shown]
-    if len(ordered) > len(shown):
-        parts.append(f"... and {len(ordered) - len(shown)} more. Run `jobmon list`.")
+    parts = [format_alert(p, a) for p, a in ordered]
     return _deliver(
         client,
-        title=f"{label}: {len(ordered)} postings",
+        title=EMAIL_SUBJECT,
         body="\n\n---\n\n".join(parts),
         priority=3,
+        html_body=format_digest_html(ordered),
     )
 
 
@@ -79,21 +68,42 @@ ELIGIBILITY_RANK = {"likely_ok": 0, "unknown": 1, "blocked": 2}
 
 
 def digest_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, str]:
-    _, analysis = item
+    posting, analysis = item
     eligibility = ELIGIBILITY_RANK.get(analysis.eligibility, 1)
-    return (eligibility, 1 if analysis.degree_gated else 0, analysis.global_id)
+    posted = posting.posted_at or posting.first_seen_at
+    return (-posted.timestamp(), eligibility, analysis.global_id)
+
+
+def format_digest_html(items: list[tuple[Posting, Analysis]]) -> str:
+    """Render categorized openings with readable text links instead of bare URLs."""
+    groups: dict[str, list[tuple[Posting, Analysis]]] = defaultdict(list)
+    for posting, analysis in items:
+        category = ", ".join(analysis.function) or analysis.role_class
+        groups[category.title()].append((posting, analysis))
+
+    sections = []
+    for category, group in groups.items():
+        entries = []
+        for posting, analysis in group:
+            where = escape(", ".join(posting.locations) or "location not stated")
+            if posting.remote_type:
+                where += f" ({escape(posting.remote_type)})"
+            entries.append(
+                "<li><a href=\"{url}\"><strong>{title}</strong></a> &mdash; {company}"
+                "<br><small>{where} | {eligibility}</small></li>".format(
+                    url=escape(posting.apply_url, quote=True),
+                    title=escape(posting.title),
+                    company=escape(posting.company),
+                    where=where,
+                    eligibility=escape(analysis.eligibility),
+                )
+            )
+        sections.append(f"<h2>{escape(category)}</h2><ul>{''.join(entries)}</ul>")
+    return "<html><body><h1>Jobmon Opening Workflow</h1>" + "".join(sections) + "</body></html>"
 
 
 def instant_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, float, str]:
-    """Which postings are most worth an individual push, best first.
-
-    `digest_rank` breaks ties on `global_id`, i.e. alphabetically by ATS job number. That
-    is fine for ordering a digest you are going to scroll, and wrong for choosing which 20
-    of 697 tier-1 postings get their own notification: it picked a contract recruiting
-    coordinator over a distributed inference role. Variant score is the analyzer's own
-    answer to "how well does this match you", so use it here - as an ordering, never as a
-    suppression rule (spec 6: the filter labels, it does not decide).
-    """
+    """Legacy ranking helper retained for callers that still use individual alerts."""
     _, analysis = item
     best = max(analysis.variant_scores.values(), default=0.0)
     return (
@@ -175,6 +185,7 @@ def _deliver(
     body: str,
     priority: int = 3,
     click_url: str | None = None,
+    html_body: str | None = None,
 ) -> bool:
     """Deliver to ntfy and, when configured, SMTP email.
 
@@ -184,7 +195,7 @@ def _deliver(
     ntfy_ok = _post_ntfy(
         client, title=title, body=body, priority=priority, click_url=click_url
     )
-    email_ok = _send_email(title, body)
+    email_ok = _send_email(title, body, html_body=html_body)
     return ntfy_ok and email_ok
 
 
@@ -230,8 +241,8 @@ def _email_config() -> dict[str, str] | None:
     return values
 
 
-def _send_email(subject: str, body: str) -> bool:
-    """Send a plain-text email through SMTP. Delivery failures are retryable."""
+def _send_email(subject: str, body: str, html_body: str | None = None) -> bool:
+    """Send a multipart email through SMTP. Delivery failures are retryable."""
     config = _email_config()
     if config is None:
         return True
@@ -240,6 +251,8 @@ def _send_email(subject: str, body: str) -> bool:
     message["To"] = config["JOBMON_EMAIL_TO"]
     message["Subject"] = subject
     message.set_content(body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
     host = config["JOBMON_SMTP_HOST"]
     port = int(config["JOBMON_SMTP_PORT"])
     try:

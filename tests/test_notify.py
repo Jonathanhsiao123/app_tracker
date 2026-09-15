@@ -108,7 +108,7 @@ def test_send_alert_posts_to_the_topic_with_headers():
     assert ok is True
     request = captured[0]
     assert request.url.path == f"/{TOPIC}"
-    assert request.headers["X-Title"] == "Acme: Software Engineer, New Grad"
+    assert request.headers["X-Title"] == "Jobmon Opening Workflow"
     assert request.headers["X-Click"] == "https://boards.greenhouse.io/acme/jobs/1"
 
 
@@ -168,13 +168,13 @@ def test_configured_email_is_sent_with_the_same_alert_body(monkeypatch):
 
 # --- digest ------------------------------------------------------------------------
 
-def test_digest_is_capped_and_says_how_many_it_dropped():
-    items = [(make_posting(company=f"C{i}"), make_analysis(f"g:{i}"))
-             for i in range(notify.MAX_DIGEST_ITEMS + 7)]
+def test_digest_batches_all_items_with_required_subject_and_html_links():
+    items = [(make_posting(company=f"C{i}"), make_analysis(f"g:{i}")) for i in range(22)]
     captured = []
     assert notify.send_digest(client_capturing(captured), items, "digest") is True
     body = captured[0].content.decode()
-    assert "and 7 more" in body
+    assert "C21" in body
+    assert captured[0].headers["X-Title"] == "Jobmon Opening Workflow"
 
 
 def test_empty_digest_sends_nothing():

@@ -1,5 +1,4 @@
-# Scheduled run (spec 3). GitHub Actions cron in a PRIVATE repo. Every 3 hours - faster
-# is not useful, recruiters do not read a queue in real time.
+# Scheduled run in a PRIVATE repo. Hourly batches keep email close to posting time.
 #
 # Persistence is the committed ledger at state/seen.jsonl (build step 6). The SQLite file
 # is a derived cache, rebuilt from the ledger into a tmpdir every run and thrown away.
@@ -19,7 +18,7 @@ name: jobmon
 
 on:
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
