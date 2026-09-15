@@ -49,10 +49,15 @@ def send_digest(
 ) -> bool:
     """Deliver one batch containing every eligible opening from this run.
 
-    Openings are ordered newest-first and grouped by role/function in the email.
+    Openings are ordered newest-first and grouped by role/function in the email. An empty
+    batch is still delivered as a heartbeat so SMTP recipients can verify the hourly run.
     """
     if not items:
-        return True
+        return _deliver(
+            client,
+            title=EMAIL_SUBJECT,
+            body="Hourly scan complete. No new eligible openings were found.",
+        )
     ordered = sorted(items, key=digest_rank)
     parts = [format_alert(p, a) for p, a in ordered]
     return _deliver(

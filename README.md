@@ -60,7 +60,8 @@ competing with the alerts this project exists to send.
 
 ### Email delivery
 
-Every hourly batch can also be delivered by SMTP. Push delivery remains enabled;
+Every hourly batch can also be delivered by SMTP. Even an empty scan sends a heartbeat
+email so you can tell that the hourly workflow ran. Push delivery remains enabled;
 when SMTP is configured, both channels must succeed before a posting is marked alerted.
 Set these GitHub Actions secrets to enable it:
 
@@ -74,8 +75,9 @@ environment variables in the shell before `jobmon run`.
 ## How much reaches your phone
 
 Each hourly run sends one batch containing eligible openings released within the last 24
-hours, ordered newest first. The email subject is `Jobmon Opening Workflow`; its HTML view
-groups openings by function and embeds the application URL in the job title.
+hours, ordered newest first. When there are no new openings, it sends a short heartbeat
+instead. The email subject is `Jobmon Opening Workflow`; its HTML view groups openings by
+function and embeds the application URL in the job title.
 
 ## Commands
 

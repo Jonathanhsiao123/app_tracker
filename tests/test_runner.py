@@ -112,7 +112,7 @@ def test_run1_alerts_n_run2_alerts_zero(conn, wire):
     second = runner.run(conn)
     assert second.new == 0
     assert second.alerted == 0
-    assert len(sent["digests"]) == 1  # only the first run sent anything
+    assert len(sent["digests"]) == 2  # the second run sends the empty hourly heartbeat
 
 
 def test_health_row_is_recorded_every_run(conn, wire):
@@ -167,7 +167,7 @@ def test_delivered_posting_is_not_resent(conn, wire):
     runner.run(conn)
     sent = wire(FakeAdapter([greenhouse_job(1)]))
     assert runner.run(conn).alerted == 0
-    assert sent["digests"] == []
+    assert sent["digests"] == [[]]
 
 
 # --- seed --------------------------------------------------------------------------
@@ -226,7 +226,7 @@ def test_closed_github_repo_row_is_suppressed_but_stored(conn, wire):
     assert result.new == 1
     assert result.closed == 1
     assert result.alerted == 0
-    assert sent["digests"] == []
+    assert sent["digests"] == [[]]
     assert store.get_posting(conn, github_repo_global_id("Acme", url)) is not None
 
 
@@ -285,7 +285,7 @@ def test_citizenship_only_posting_is_blocked_and_suppressed(conn, wire):
     assert analysis.eligibility_evidence == ["Must be a U.S. citizen."]  # verbatim
     assert result.blocked == 1
     assert result.alerted == 0
-    assert sent["digests"] == []
+    assert sent["digests"] == [[]]
 
 
 def test_blocked_posting_is_stored_and_retrievable_via_show_blocked(conn, wire):

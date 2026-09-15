@@ -18,7 +18,8 @@ name: jobmon
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    # Avoid the top-of-hour Actions queue, which is routinely delayed under load.
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:

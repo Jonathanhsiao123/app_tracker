@@ -177,10 +177,11 @@ def test_digest_batches_all_items_with_required_subject_and_html_links():
     assert captured[0].headers["X-Title"] == "Jobmon Opening Workflow"
 
 
-def test_empty_digest_sends_nothing():
+def test_empty_digest_sends_hourly_heartbeat():
     captured = []
     assert notify.send_digest(client_capturing(captured), [], "digest") is True
-    assert captured == []
+    assert len(captured) == 1
+    assert "No new eligible openings" in captured[0].content.decode()
 
 
 def test_digest_puts_sponsorship_first_and_degree_gated_last():

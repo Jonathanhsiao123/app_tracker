@@ -287,7 +287,7 @@ def _send(
     costs less than one missed posting.
     """
     delivered: list[str] = []
-    if sendable and notify.send_digest(client, sendable, "jobmon digest"):
+    if notify.send_digest(client, sendable, "jobmon digest"):
         delivered.extend(p.global_id for p, _ in sendable)
     if delivered:
         store.mark_alerted(conn, delivered, datetime.now(UTC))
