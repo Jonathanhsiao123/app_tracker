@@ -67,6 +67,12 @@ jobs:
         id: run
         env:
           JOBMON_NTFY_TOPIC: ${{ secrets.JOBMON_NTFY_TOPIC }}
+          JOBMON_SMTP_HOST: ${{ secrets.JOBMON_SMTP_HOST }}
+          JOBMON_SMTP_PORT: ${{ secrets.JOBMON_SMTP_PORT }}
+          JOBMON_SMTP_USER: ${{ secrets.JOBMON_SMTP_USER }}
+          JOBMON_SMTP_PASSWORD: ${{ secrets.JOBMON_SMTP_PASSWORD }}
+          JOBMON_EMAIL_FROM: ${{ secrets.JOBMON_EMAIL_FROM }}
+          JOBMON_EMAIL_TO: ${{ secrets.JOBMON_EMAIL_TO }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           args=(run --ledger state/seen.jsonl)

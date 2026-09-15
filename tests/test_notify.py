@@ -125,6 +125,47 @@ def test_delivery_failure_returns_false_rather_than_raising():
                              make_analysis()) is False
 
 
+def test_configured_email_is_sent_with_the_same_alert_body(monkeypatch):
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            sent.update(host=host, port=port, timeout=timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def ehlo(self):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, username, password):
+            sent.update(username=username, password=password)
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    monkeypatch.setenv("JOBMON_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("JOBMON_SMTP_PORT", "587")
+    monkeypatch.setenv("JOBMON_SMTP_USER", "user")
+    monkeypatch.setenv("JOBMON_SMTP_PASSWORD", "password")
+    monkeypatch.setenv("JOBMON_EMAIL_FROM", "monitor@example.test")
+    monkeypatch.setenv("JOBMON_EMAIL_TO", "me@example.test")
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+
+    posting = make_posting()
+    analysis = make_analysis()
+    assert notify._send_email("subject", notify.format_alert(posting, analysis)) is True
+    assert sent["message"]["From"] == "monitor@example.test"
+    assert sent["message"]["To"] == "me@example.test"
+    assert "boards.greenhouse.io/acme/jobs/1" in sent["message"].get_content()
+
+
 # --- digest ------------------------------------------------------------------------
 
 def test_digest_is_capped_and_says_how_many_it_dropped():

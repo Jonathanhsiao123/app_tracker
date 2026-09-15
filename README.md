@@ -58,6 +58,19 @@ competing with the alerts this project exists to send.
 | 2 | misconfigured, nothing ran (usually `JOBMON_NTFY_TOPIC` unset) |
 | 3 | ran; a pipeline problem was pushed to the ntfy topic |
 
+### Email delivery
+
+Every job alert and digest can also be delivered by SMTP. Push delivery remains enabled;
+when SMTP is configured, both channels must succeed before a posting is marked alerted.
+Set these GitHub Actions secrets to enable it:
+
+`JOBMON_SMTP_HOST`, `JOBMON_SMTP_PORT` (usually `587`, or `465` for implicit TLS),
+`JOBMON_SMTP_USER`, `JOBMON_SMTP_PASSWORD`, `JOBMON_EMAIL_FROM`, and `JOBMON_EMAIL_TO`.
+
+Leave all six unset for ntfy-only operation. The SMTP password is read only from the
+Actions secret and is never written to the ledger or logs. For local runs, set the same
+environment variables in the shell before `jobmon run`.
+
 ## How much reaches your phone
 
 Tier-1 companies alert individually, everything else is batched into one digest - but the

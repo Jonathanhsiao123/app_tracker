@@ -1,7 +1,7 @@
-"""Notifications (spec 10). PHASE 1 for the ntfy path.
+"""Notifications (spec 10).
 
 Transport: an ntfy.sh topic or a Telegram bot. Both are a few lines and free.
-Email is avoided on purpose - it gets buried.
+Email is optional and uses SMTP when configured. The ntfy path remains the push channel.
 
   Tier 1 companies (hand-listed, ~20): instant individual alert.
   Everything else:                     batched digest, twice daily.
@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import os
+import smtplib
+from email.message import EmailMessage
 
 import httpx
 
@@ -40,10 +42,11 @@ def send_alert(client: httpx.Client, posting: Posting, analysis: Analysis) -> bo
     posting is retried next run instead of being lost.
     """
     priority = 4 if analysis.eligibility == "likely_ok" else 3
-    return _post_ntfy(
+    body = format_alert(posting, analysis)
+    return _deliver(
         client,
         title=f"{posting.company}: {posting.title}",
-        body=format_alert(posting, analysis),
+        body=body,
         priority=priority,
         click_url=posting.apply_url,
     )
@@ -64,7 +67,7 @@ def send_digest(
     parts = [format_alert(p, a) for p, a in shown]
     if len(ordered) > len(shown):
         parts.append(f"... and {len(ordered) - len(shown)} more. Run `jobmon list`.")
-    return _post_ntfy(
+    return _deliver(
         client,
         title=f"{label}: {len(ordered)} postings",
         body="\n\n---\n\n".join(parts),
@@ -157,13 +160,32 @@ def send_weekly_summary(
     if silent:
         lines.append("SILENT (ok but zero postings): " + ", ".join(silent))
     lines.extend(f"{h.adapter}: {h.error}" for h in health if not h.ok)
-    return _post_ntfy(client, title="jobmon weekly", body="\n".join(lines), priority=3)
+    return _deliver(client, title="jobmon weekly", body="\n".join(lines), priority=3)
 
 
 def send_pipeline_alert(client: httpx.Client, message: str) -> bool:
     """A pipeline failure, visibly distinct from a job alert (build step 6.4). Max priority
     and a different title prefix so it cannot be mistaken for a posting worth reading."""
-    return _post_ntfy(client, title="!! jobmon PIPELINE", body=message, priority=5)
+    return _deliver(client, title="!! jobmon PIPELINE", body=message, priority=5)
+
+
+def _deliver(
+    client: httpx.Client,
+    title: str,
+    body: str,
+    priority: int = 3,
+    click_url: str | None = None,
+) -> bool:
+    """Deliver to ntfy and, when configured, SMTP email.
+
+    Both configured channels must succeed before the runner marks postings alerted. A
+    partial failure therefore retries next run instead of silently losing one channel.
+    """
+    ntfy_ok = _post_ntfy(
+        client, title=title, body=body, priority=priority, click_url=click_url
+    )
+    email_ok = _send_email(title, body)
+    return ntfy_ok and email_ok
 
 
 def _post_ntfy(client: httpx.Client, title: str, body: str, priority: int = 3,
@@ -186,6 +208,56 @@ def _post_ntfy(client: httpx.Client, title: str, body: str, priority: int = 3,
         response.raise_for_status()
     except httpx.HTTPError as exc:
         log.warning("ntfy delivery failed: %s", exc)
+        return False
+    return True
+
+
+def _email_config() -> dict[str, str] | None:
+    """Return SMTP settings, or None when email is deliberately disabled."""
+    values = {key: os.environ.get(key, "").strip() for key in (
+        "JOBMON_SMTP_HOST", "JOBMON_EMAIL_FROM", "JOBMON_EMAIL_TO"
+    )}
+    configured = [bool(value) for value in values.values()]
+    if not any(configured):
+        return None
+    if not all(configured):
+        raise RuntimeError(
+            "email requires JOBMON_SMTP_HOST, JOBMON_EMAIL_FROM, and JOBMON_EMAIL_TO"
+        )
+    values["JOBMON_SMTP_PORT"] = os.environ.get("JOBMON_SMTP_PORT", "587")
+    values["JOBMON_SMTP_USER"] = os.environ.get("JOBMON_SMTP_USER", "").strip()
+    values["JOBMON_SMTP_PASSWORD"] = os.environ.get("JOBMON_SMTP_PASSWORD", "")
+    return values
+
+
+def _send_email(subject: str, body: str) -> bool:
+    """Send a plain-text email through SMTP. Delivery failures are retryable."""
+    config = _email_config()
+    if config is None:
+        return True
+    message = EmailMessage()
+    message["From"] = config["JOBMON_EMAIL_FROM"]
+    message["To"] = config["JOBMON_EMAIL_TO"]
+    message["Subject"] = subject
+    message.set_content(body)
+    host = config["JOBMON_SMTP_HOST"]
+    port = int(config["JOBMON_SMTP_PORT"])
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+                if config["JOBMON_SMTP_USER"]:
+                    smtp.login(config["JOBMON_SMTP_USER"], config["JOBMON_SMTP_PASSWORD"])
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.ehlo()
+                if config["JOBMON_SMTP_USER"]:
+                    smtp.login(config["JOBMON_SMTP_USER"], config["JOBMON_SMTP_PASSWORD"])
+                smtp.send_message(message)
+    except (OSError, smtplib.SMTPException, ValueError) as exc:
+        log.warning("email delivery failed: %s", exc)
         return False
     return True
 
