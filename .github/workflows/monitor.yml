@@ -21,6 +21,14 @@
 # other way to tell you anything. Every other problem - a dead adapter, a board that went
 # to zero - is pushed to the ntfy topic by `jobmon run` itself, which exits 3 to say
 # "reported, already delivered, do not turn this red".
+#
+# ADDENDUM: HOURLY HEARTBEAT. `jobmon run` only emails when it finds a genuinely new,
+# unalerted posting - by design (see above), it does NOT email on every run. That means
+# a quiet hour produces zero email, which reads from the outside as "email is broken" even
+# though nothing is broken. The "Heartbeat email" step below is a SEPARATE, unconditional
+# notification - it fires every successful run regardless of whether jobmon found anything,
+# so you get proof-of-life every hour. It reuses the same SMTP secrets and does not touch
+# jobmon's own alerting logic at all.
 name: jobmon
 
 on:
@@ -110,6 +118,37 @@ jobs:
             exit 0
           fi
           exit "${code}"
+
+      # Unconditional proof-of-life email. jobmon's own alerting (above) only fires on a
+      # genuinely new posting, so a quiet hour is silent by design - which is easy to
+      # mistake for a broken email pipeline. This step fires every time the Run step
+      # above succeeded or reported (exit 0 or handled exit 3), independent of whether any
+      # posting alert was sent, so you get an hourly signal that the sweep itself is alive.
+      # Skipped on dry runs (nothing "ran for real") and skipped if Run crashed (the
+      # "Report failure" step + GitHub's own failure email already cover that case).
+      - name: Heartbeat email
+        if: success() && !inputs.dry_run
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.JOBMON_SMTP_HOST }}
+          server_port: ${{ secrets.JOBMON_SMTP_PORT }}
+          username: ${{ secrets.JOBMON_SMTP_USER }}
+          password: ${{ secrets.JOBMON_SMTP_PASSWORD }}
+          from: ${{ secrets.JOBMON_EMAIL_FROM }}
+          to: ${{ secrets.JOBMON_EMAIL_TO }}
+          subject: "jobmon heartbeat - run #${{ github.run_number }}"
+          body: |
+            jobmon completed a sweep.
+
+            Run:     #${{ github.run_number }} (${{ github.run_id }})
+            Trigger: ${{ github.event_name }}
+            Time:    ${{ github.event.repository.updated_at || '' }} (see Actions log for exact UTC time)
+            Exit:    ${{ steps.run.outputs.code }}
+            Seeded:  ${{ steps.run.outputs.seeded == 'true' }}
+
+            This is an unconditional hourly heartbeat, separate from jobmon's own
+            posting alerts. Absence of this email means the run itself did not
+            complete successfully - check the Actions tab.
 
       # Ordering is the whole point: `jobmon run` notifies and writes the ledger BEFORE
       # this step exists. A commit that fails here costs one duplicate alert next run; a
