@@ -27,12 +27,12 @@ on:
         type: boolean
         default: false
 
-# Two overlapping runs would both rebuild from the same ledger and both alert the same
-# postings. Serialize instead, and never cancel: a cancelled run that already notified but
-# had not yet committed would re-alert next time (T6.8).
+# Keep only the newest scheduled run when a sweep overlaps the next hourly tick. Queuing
+# old sweeps can turn an hourly schedule into multi-hour delivery gaps; the ledger makes a
+# canceled run retryable on the next pass.
 concurrency:
   group: monitor
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run:
