@@ -1,0 +1,84 @@
+# One file per user. EVERYTHING SUBJECTIVE LIVES HERE (addendum 3).
+#
+# Nothing in this file touches a posting record. Analysis - eligibility label, evidence
+# sentence, keyword matches, degree flag, YoE floor, role class, function, locations - is
+# objective, computed once, and shared by every profile. That separation is why adding a
+# second user costs zero extra fetching, and why editing this file never triggers a
+# re-crawl: priorities apply at ALERT time, not at analysis time.
+#
+# Every field has a default in code, so a minimal profile is four lines. Delete anything
+# here you do not care about. A field name that is NOT recognised is an error, not a
+# warning - a typo'd `on_unkown` would otherwise leave the flood in place with no error
+# anywhere (T8.12).
+#
+# `jobmon run --profile jonathan`; no flag runs every profile in this directory.
+
+name: jonathan
+locale: us
+
+# --- work authorization -------------------------------------------------
+eligibility:
+  needs_sponsorship: true          # false for a citizen/PR user: whole block no-ops
+  on_blocked: suppress             # suppress | digest | alert
+  on_unknown: digest               # the majority case. digest, not alert
+  on_likely_ok: alert              # explicit sponsorship language is a strong signal
+  min_sponsor_confidence: occasional   # frequent | occasional | none_observed | any
+  suppress_clearance: true         # clearance and ITAR are hard blocks, separate toggle
+  # `min_sponsor_confidence` DOWNRANKS by default and never suppresses. Set this to
+  # `suppress` or `digest` only if you mean it: LCA filing history is a prior, not a fact
+  # about this req, and a small employer who would sponsor simply has not filed yet.
+  on_below_min_sponsor: downrank
+
+# --- what counts as relevant -------------------------------------------
+roles:
+  role_class: [new_grad, internship]
+  on_unclear_role: digest          # was: alert. This alone is a large cut
+  priorities:                      # see Phase X. Reorder these lines to re-rank.
+    order: [mle, security, systems, swe, data]
+    never: [quant, sdet]
+    sort_by: priority              # priority | score | date | company
+  degree_gated: digest             # MS/PhD required
+  max_yoe: 2
+
+locations:
+  allow: [remote, "United States"]
+  prefer: ["Pittsburgh", "New York", "Seattle", "Bay Area"]
+  deny: []
+
+# --- noise control ------------------------------------------------------
+#
+# TWO CALIBRATION TRAPS, both measured against a real 17,095-posting sweep on 2026-09-15:
+#
+#  1. `min_score` is only meaningful next to the scores real postings get. On that sweep:
+#     a Gecko Robotics embedded internship in Pittsburgh scored 0.73, an ordinary MLE req
+#     in an allowed-but-not-preferred city scored 0.57, and an unremarkable SWE req with
+#     no keyword hits scored under 0.45. 0.55 passed 4 of 410 candidates to the digest.
+#     Move it from `jobmon audit`, not from intuition.
+#
+#  2. `min_sponsor_confidence: occasional` costs every posting a flat 0.10 while
+#     `sponsor_history.yaml` is still empty - with no filing data, every employer is
+#     `unknown`, which is below `occasional`. So 0.55 currently behaves like 0.65. Run
+#     scripts/build_sponsor_history.py and that penalty stops being uniform.
+#
+# A tier-1 company still reaches `instant` below `min_score` - that is the point of the
+# tier list, and `max_instant_per_day` is what bounds it. On the same sweep that sent a
+# "Recruiting Coordinator" req from a tier-1 employer to the phone. If that happens to you,
+# the fix is to prune `tier: true` in companies.yaml, not to raise the threshold here.
+limits:
+  min_score: 0.55                  # below this: stored, not alerted
+  max_instant_per_day: 8
+  max_digest_items: 25
+  max_per_company_per_day: 3       # stops one employer flooding a digest
+  suppress_if_applied: true
+  suppress_reposts: true
+
+denylist:
+  companies: []
+  title_terms: [salesforce, sap, workday consultant, sdet]
+  # `postings:` is appended to by `jobmon mute`, via state/feedback/jonathan.jsonl.
+  # You can also list global_ids here by hand.
+
+routing:
+  instant: ntfy                    # tier-1 companies and score > 0.8
+  digest: email                    # twice daily
+  silent: none                     # stored only, visible via `jobmon list`

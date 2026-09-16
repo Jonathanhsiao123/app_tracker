@@ -87,14 +87,17 @@ def wire(monkeypatch):
         sent["alerts"].clear()
         sent["digests"].clear()
         monkeypatch.setattr(runner, "enabled_adapters", lambda: [adapter])
+        # Since the addendum the runner sends per profile: `send_instant` for a tier-1 or
+        # high-score posting, `send_profile_digest` for the batch. The capture shape is
+        # unchanged so the assertions below still read the same way.
         monkeypatch.setattr(
-            runner.notify, "send_alert",
-            lambda c, p, a: (sent["alerts"].append(p.global_id), alert_ok)[1],
+            runner.notify, "send_instant",
+            lambda c, cand, prof: (sent["alerts"].append(cand.global_id), alert_ok)[1],
         )
         monkeypatch.setattr(
-            runner.notify, "send_digest",
-            lambda c, items, label: (sent["digests"].append([p.global_id for p, _ in items]),
-                                     digest_ok)[1],
+            runner.notify, "send_profile_digest",
+            lambda c, cands, prof, truncated=0, held=None: (
+                sent["digests"].append([x.global_id for x in cands]), digest_ok)[1],
         )
         return sent
 
@@ -342,14 +345,10 @@ def test_cosmetic_gap_names_its_substitute_in_the_stored_record(conn, wire):
 def test_reanalyze_does_not_cause_a_realert(conn, wire):
     wire(FakeAdapter([greenhouse_job(1)]))
     runner.run(conn)
-    before = conn.execute(
-        "SELECT alerted_at FROM postings WHERE global_id = 'greenhouse:acme:1'"
-    ).fetchone()["alerted_at"]
+    before = store.alerted_at(conn, "greenhouse:acme:1")
     assert runner.analyze_pending(conn, reanalyze_all=True) == 1
-    after = conn.execute(
-        "SELECT alerted_at FROM postings WHERE global_id = 'greenhouse:acme:1'"
-    ).fetchone()["alerted_at"]
-    assert before == after
+    after = store.alerted_at(conn, "greenhouse:acme:1")
+    assert before is not None and before == after
 
 
 def test_analyze_pending_only_touches_rows_without_analysis(conn, wire):
@@ -365,16 +364,16 @@ def test_tier1_company_gets_an_individual_alert(conn, wire, monkeypatch):
     sent = wire(FakeAdapter([greenhouse_job(1)]))
     result = runner.run(conn)
     assert sent["alerts"] == ["greenhouse:acme:1"]
-    assert sent["digests"] == []
+    # The digest still goes out, empty: it doubles as the hourly heartbeat, so an SMTP
+    # recipient can tell a quiet hour from a dead cron.
+    assert sent["digests"] == [[]]
     assert result.alerted == 1
 
 
 def test_mark_alerted_timestamp_is_set_after_delivery(conn, wire):
     wire(FakeAdapter([greenhouse_job(1)]))
     runner.run(conn)
-    row = conn.execute(
-        "SELECT alerted_at FROM postings WHERE global_id = 'greenhouse:acme:1'"
-    ).fetchone()
-    assert row["alerted_at"] is not None
-    assert datetime.fromisoformat(row["alerted_at"]).tzinfo is not None
-    assert datetime.fromisoformat(row["alerted_at"]) <= datetime.now(UTC)
+    when = store.alerted_at(conn, "greenhouse:acme:1")
+    assert when is not None
+    assert when.tzinfo is not None
+    assert when <= datetime.now(UTC)

@@ -16,7 +16,7 @@ from jobmon import cli, runner
 
 @pytest.fixture
 def ledger_path(tmp_path):
-    return tmp_path / "state" / "seen.jsonl"
+    return tmp_path / "state" / "postings.jsonl"
 
 
 @pytest.fixture
@@ -57,8 +57,9 @@ def run_cli(ledger_path, *extra):
 
 def install(monkeypatch, adapter):
     monkeypatch.setattr(runner, "enabled_adapters", lambda: [adapter])
-    monkeypatch.setattr(runner.notify, "send_alert", lambda c, p, a: True)
-    monkeypatch.setattr(runner.notify, "send_digest", lambda c, items, label: True)
+    monkeypatch.setattr(runner.notify, "send_instant", lambda c, cand, prof: True)
+    monkeypatch.setattr(runner.notify, "send_profile_digest",
+                        lambda c, cands, prof, truncated=0, held=None: True)
 
 
 # --- the missing secret: red, but say which secret ----------------------------------
@@ -204,10 +205,15 @@ def test_a_wholesale_parse_failure_is_reported(
 # --- a cold sweep must not try to push 697 times ------------------------------------
 
 def test_all_openings_are_sent_in_one_digest(monkeypatch, conn_tier):
-    """A cold sweep is delivered as one batch so no opening needs an individual push."""
+    """A cold sweep of NON-tier companies is delivered as one batch, so no opening needs
+    an individual push.
+
+    Since the addendum a tier-1 company does get an individual instant alert (that is the
+    point of the tier list), so this uses an ordinary company and asserts the batch.
+    """
     from datetime import UTC, datetime
 
-    from jobmon import notify, store
+    from jobmon import notify, profiles, runner, store
     from jobmon.models import Analysis, Posting
 
     sendable = []
@@ -226,19 +232,32 @@ def test_all_openings_are_sent_in_one_digest(monkeypatch, conn_tier):
         )))
 
     calls = {"alerts": 0, "digests": []}
-    monkeypatch.setattr(notify, "send_alert",
-                        lambda c, p, a: calls.__setitem__("alerts", calls["alerts"] + 1) or True)
-    monkeypatch.setattr(notify, "send_digest",
-                        lambda c, items, label: calls["digests"].append(len(items)) or True)
+    monkeypatch.setattr(notify, "send_instant",
+                        lambda c, cand, prof: calls.__setitem__("alerts", calls["alerts"] + 1)
+                        or True)
+    monkeypatch.setattr(notify, "send_profile_digest",
+                        lambda c, cands, prof, truncated=0, held=None:
+                        calls["digests"].append(len(cands)) or True)
 
-    delivered = runner._send(None, conn_tier, sendable, {"Acme"})
+    outcome = runner._deliver_profile(
+        None, conn_tier, profiles.Profile(), [p for p, _ in sendable],
+        _config(), tier=set(),
+    )
 
     assert calls["alerts"] == 0
     assert calls["digests"] == [50]
-    assert len(delivered) == 50, "every posting is still marked alerted"
+    assert outcome.alerted == 50, "every posting is still marked alerted"
+
+
+def _config():
+    from jobmon import config_loader
+
+    return config_loader.load()
 
 
 def test_digest_orders_newest_openings_first():
+    from datetime import UTC, datetime
+
     from jobmon import notify
     from jobmon.models import Analysis, Posting
 

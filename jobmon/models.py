@@ -20,6 +20,16 @@ Variant = Literal["generalist", "mle", "systems", "security"]
 Function = Literal["swe", "mle", "systems", "security", "research", "data", "quant"]
 ApplicationStatus = Literal["applied", "screen", "reject", "onsite", "offer"]
 
+# Addendum 4. How often an employer has actually filed for sponsorship, from DOL LCA
+# disclosure data. A much stronger signal than posting text, which is silent for most
+# employers who sponsor routinely.
+SponsorConfidence = Literal["frequent", "occasional", "none_observed", "unknown"]
+
+# Addendum 5. Where one posting is allowed to go for one profile. Ordered: a policy
+# ceiling and a score proposal are combined with `min`, so the quieter of the two wins.
+Route = Literal["silent", "digest", "instant"]
+ROUTE_ORDER: dict[str, int] = {"silent": 0, "digest": 1, "instant": 2}
+
 
 @dataclass(slots=True)
 class Posting:
@@ -70,6 +80,21 @@ class Analysis:
     grad_window: str | None = None  # e.g. "December 2026 and August 2027"
     degree_gated: bool = False  # hard MS/PhD floor -> deprioritize, never suppress
     yoe_floor: int | None = None  # stated years-of-experience minimum
+
+    # --- addendum 2, 4: still objective, still computed once, shared by every profile --
+    #
+    # `eligibility` above is the COMBINED label (posting text + employer filing history).
+    # `text_eligibility` is what the text alone said, kept so the combination is auditable
+    # and so a history-driven promotion can be undone by editing one YAML file rather than
+    # by re-crawling 13,000 postings.
+    text_eligibility: Eligibility = "unknown"
+    sponsor_confidence: SponsorConfidence = "unknown"
+    sponsor_evidence: str | None = None  # the badge's second half, e.g. "240 H-1B filings"
+    # Which family of blocking signal fired: citizenship | clearance | export_control |
+    # sponsorship_refusal. `suppress_clearance` is a separate profile toggle from
+    # `on_blocked` precisely because clearance and ITAR are the only true hard blocks, so
+    # the reason has to survive into the profile layer.
+    blocking_groups: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

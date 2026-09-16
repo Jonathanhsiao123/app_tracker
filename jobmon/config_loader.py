@@ -44,6 +44,8 @@ class Config:
     skill_inventory: dict[str, list[str]]  # skill_inventory.yaml
     sponsorship_overrides: dict[str, dict[str, Any]]  # company -> {status, note, checked_on}
     variants: dict[str, VariantProfile] = field(default_factory=dict)  # variants.yaml
+    # addendum 4: normalized company -> {confidence, h1b_filings_recent, source, ...}
+    sponsor_history: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -151,7 +153,84 @@ def load(config_dir: Path = CONFIG_DIR) -> Config:
         skill_inventory=skill_inventory,
         sponsorship_overrides=overrides,
         variants=load_variants(config_dir / "variants.yaml", taxonomy),
+        sponsor_history=load_sponsor_history(config_dir / "sponsor_history.yaml"),
     )
+
+
+# --- Phase X: rank to weight ---------------------------------------------------------
+#
+# Lives here, at config load time, rather than in scoring: the ordered list is a config
+# representation and the float is an implementation detail, so the conversion belongs at
+# the boundary where every other YAML-to-number conversion happens. Scoring then reads
+# plain floats and knows nothing about ranks.
+
+# A category listed in neither `order` nor `never` takes this, so a new taxonomy category
+# degrades quietly instead of disappearing (TX.3). It sits below every rank-derived weight
+# for any list length, which is what "the lowest non-zero weight" has to mean if it is to
+# be stable as you add and remove lines.
+_FLOOR = 0.3
+_SPREAD = 0.7  # rank 0 scores 1.0; the spread carries the last listed rank down toward 0.3
+
+
+def rank_weights(
+    order: list[str], overrides: dict[str, float] | None = None
+) -> dict[str, float]:
+    """Map an ordered category list to weights, highest first (Phase X).
+
+    Linear, because nothing here justifies more: `weight = 1.0 - (index / len(order)) * 0.7`.
+    You never touch a number unless you want to, and when you do, `overrides` wins for the
+    categories it names and leaves every other category on its rank-derived value (TX.4).
+
+    An empty `order` yields an empty map; `Priorities.weight_for` then hands out the floor
+    to everything (TX.9).
+    """
+    weights = {
+        category: 1.0 - (index / len(order)) * _SPREAD
+        for index, category in enumerate(order)
+    }
+    for category, value in (overrides or {}).items():
+        weights[category] = value
+    return weights
+
+
+rank_weights.FLOOR = _FLOOR  # type: ignore[attr-defined]
+
+
+# --- addendum 4: employer sponsorship history ----------------------------------------
+
+SPONSOR_HISTORY_PATH = CONFIG_DIR / "sponsor_history.yaml"
+SPONSOR_CONFIDENCES = frozenset({"frequent", "occasional", "none_observed", "unknown"})
+
+
+def load_sponsor_history(path: Path = SPONSOR_HISTORY_PATH) -> dict[str, dict[str, Any]]:
+    """Read `config/sponsor_history.yaml`, keyed by normalized company name.
+
+    A missing file is an empty history, not an error: the file is built by a script against
+    bulk DOL downloads, and the rest of the system has to work before it has ever been run.
+
+    Keys are normalized on the way in so that a hand-typed "Acme Corp." and the script's
+    "acme_corp" both find the same posting's employer. A bad `confidence` value raises -
+    it feeds a score term, and a typo there would silently pin an employer at the neutral
+    default forever.
+    """
+    from .normalize import normalize_company
+
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    history: dict[str, dict[str, Any]] = {}
+    for company, block in raw.items():
+        block = dict(block or {})
+        confidence = block.get("confidence", "unknown")
+        if confidence not in SPONSOR_CONFIDENCES:
+            raise ConfigError(
+                f"sponsor_history.yaml: {company!r} has confidence {confidence!r}; "
+                f"must be one of {sorted(SPONSOR_CONFIDENCES)}"
+            )
+        block["confidence"] = confidence
+        block.setdefault("company", str(company))
+        history[normalize_company(str(company).replace("_", " "))] = block
+    return history
 
 
 def tier_companies(cfg: Config) -> set[str]:

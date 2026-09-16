@@ -1,0 +1,55 @@
+# Employer sponsorship history, keyed by company (addendum 4).
+#
+# WHY THIS FILE EXISTS. Posting text is a weak signal for visa support: companies that
+# sponsor routinely usually say nothing, and boilerplate refusal language sometimes sits on
+# reqs a recruiter will happily override. Company filing history is much stronger, and it
+# is public.
+#
+# BUILD IT WITH:  python scripts/build_sponsor_history.py --input <dir of DOL CSVs>
+#
+# The script downloads nothing by itself. Get the LCA disclosure files from
+# https://www.dol.gov/agencies/eta/foreign-labor/performance - public, quarterly, bulk
+# download, no scraping - convert the .xlsx to .csv, and point `--input` at the directory.
+# The script aggregates filings per employer over the last two years, fuzzy-matches
+# employer names against companies.yaml, and buckets into tiers.
+#
+# Suggested cutoffs, and the script's defaults. Adjust after you see the distribution:
+#   50+    filings -> frequent
+#   5-49   filings -> occasional
+#   1-4    filings -> none_observed
+#   no match       -> unknown  (absent from this file entirely)
+#
+# HOW IT COMBINES WITH THE TEXT CLASSIFIER - it does not replace it:
+#
+#   text label   history         result
+#   blocked      any             blocked      explicit refusal always wins (T8.5)
+#   likely_ok    any             likely_ok
+#   unknown      frequent        likely_ok    promoted; evidence names the filing count
+#   unknown      occasional      unknown      confidence noted
+#   unknown      none_observed   unknown      flagged low confidence
+#
+# LIMITATIONS, stated in the alert rather than hidden:
+#   - LCA filings are H-1B petitions, not a promise about this req or about cap-exempt paths.
+#   - Name matching is fuzzy and subsidiaries fragment. A big employer may appear under
+#     several legal entities, so a low count can be an artefact of the match.
+#   - `none_observed` is weak evidence, not a block. Small companies that would sponsor
+#     simply have not yet.
+#   - Clearance and ITAR are the only true hard blocks in this system. Everything else here
+#     is a prior.
+#
+# Keys are normalized (lowercased, punctuation stripped, underscores treated as spaces) and
+# matched token-prefix-wise against the posting's company name, so `acme_corp` matches
+# "Acme Corp, Inc." A longer key wins over a shorter one, which is how a defense subsidiary
+# gets its own entry.
+#
+# FORMAT:
+#
+# acme_corp:
+#   confidence: frequent          # frequent | occasional | none_observed | unknown
+#   h1b_filings_recent: 240
+#   source: dol_lca_disclosure
+#   checked_on: 2026-09-15
+#   since: 2024
+#   note: "new grad SWE reqs sponsor; defense subsidiary does not"
+#
+# Empty until the builder has been run. Every code path below works with an empty file.

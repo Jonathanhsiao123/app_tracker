@@ -27,4 +27,4 @@ target-version = "py312"
 include = ["jobmon*"]
 
 [tool.setuptools.package-data]
-jobmon = ["config/*.yaml"]
+jobmon = ["config/*.yaml", "config/profiles/*.yaml"]

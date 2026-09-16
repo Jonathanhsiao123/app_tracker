@@ -17,8 +17,22 @@ from jobmon import ledger, runner
 
 @pytest.fixture
 def paths(tmp_path):
-    return {"ledger_path": tmp_path / "state" / "seen.jsonl",
+    """The split ledger (addendum 2, build step 1): postings and alert state are two files.
+
+    `ledger_path` still names one file because `--ledger` and monitor.yml do;
+    `ledger.resolve_state_dir` turns it into the directory both files live in.
+    """
+    return {"ledger_path": tmp_path / "state" / "postings.jsonl",
             "health_path": tmp_path / "state" / "health.json"}
+
+
+def alerts_file(paths, profile="default"):
+    return ledger.alerted_path(paths["ledger_path"].parent, profile)
+
+
+def alerted_ids(paths, profile="default"):
+    """global_ids this profile has been told about, read back off disk."""
+    return set(ledger.load_alerts(paths["ledger_path"].parent).get(profile, {}))
 
 
 @pytest.fixture
@@ -42,8 +56,15 @@ def wire(monkeypatch):
             sent["digests"].append([p.global_id for p, _ in items])
             return digest_ok
 
-        monkeypatch.setattr(runner.notify, "send_alert", _alert)
-        monkeypatch.setattr(runner.notify, "send_digest", _digest)
+        monkeypatch.setattr(
+            runner.notify, "send_instant",
+            lambda c, cand, prof: _alert(c, cand.posting, cand.analysis),
+        )
+        monkeypatch.setattr(
+            runner.notify, "send_profile_digest",
+            lambda c, cands, prof, truncated=0, held=None: _digest(
+                c, [(x.posting, x.analysis) for x in cands], "digest"),
+        )
         return sent
 
     return install
@@ -75,7 +96,9 @@ def test_ledger_is_written_and_reloadable(paths, wire):
     runner.run_scheduled(**paths)
     entries = ledger.load(paths["ledger_path"])
     assert len(entries) == 3
-    assert all(e.alerted_at for e in entries.values())
+    # Alert state is no longer a field on the posting entry - it is a separate file, one
+    # per profile, which is the whole point of the split.
+    assert alerted_ids(paths) == set(entries)
 
 
 # --- T6.2: ledger deleted -> re-alerts everything ----------------------------------
@@ -86,6 +109,7 @@ def test_t6_2_deleting_the_ledger_re_alerts_everything(paths, wire):
     wire(FakeAdapter(jobs(3)))
     assert runner.run_scheduled(**paths).alerted == 3
     paths["ledger_path"].unlink()
+    alerts_file(paths).unlink()
     wire(FakeAdapter(jobs(3)))
     assert runner.run_scheduled(**paths).alerted == 3
 
@@ -146,7 +170,8 @@ def test_retried_counts_postings_delivered_after_an_earlier_failure(paths, wire)
     wire(FakeAdapter(jobs(2)), digest_ok=False)  # stored, delivery reported as failed
     first = runner.run_scheduled(**paths)
     assert first.alerted == 0
-    assert all(e.alerted_at is None for e in ledger.load(paths["ledger_path"]).values())
+    assert ledger.load(paths["ledger_path"])      # the postings ARE recorded
+    assert alerted_ids(paths) == set()            # but nothing was delivered
 
     wire(FakeAdapter(jobs(2)))
     second = runner.run_scheduled(**paths)
@@ -213,8 +238,9 @@ def test_t6_7_a_raising_adapter_does_not_stop_the_others(paths, wire, monkeypatc
     bad = FakeAdapter([], raises=RuntimeError("board exploded"))
     bad.name = "bad"
     monkeypatch.setattr(runner, "enabled_adapters", lambda: [bad, good])
-    monkeypatch.setattr(runner.notify, "send_alert", lambda c, p, a: True)
-    monkeypatch.setattr(runner.notify, "send_digest", lambda c, i, l: True)
+    monkeypatch.setattr(runner.notify, "send_instant", lambda c, cand, prof: True)
+    monkeypatch.setattr(runner.notify, "send_profile_digest",
+                        lambda c, cands, prof, truncated=0, held=None: True)
     result = runner.run_scheduled(**paths)
     assert result.adapters_failed == 1
     assert result.new == 2  # the good adapter still ran
@@ -252,8 +278,7 @@ def test_ledger_does_not_store_descriptions(paths, wire):
     assert "description_text" not in row and "description_html" not in row
     assert set(row) == {
         "global_id", "source", "company", "title", "normalized_title", "first_location",
-        "apply_url", "first_seen_at", "last_seen_at", "last_seen_run", "alerted_at",
-        "reposted_count",
+        "apply_url", "first_seen_at", "last_seen_at", "last_seen_run", "reposted_count",
     }
 
 
@@ -306,10 +331,30 @@ def test_a_corrupt_line_is_skipped_not_fatal(tmp_path, caplog):
     assert set(entries) == {"a:b:1", "a:b:2"}
 
 
-def test_an_unknown_field_is_skipped_not_fatal(tmp_path):
-    path = tmp_path / "seen.jsonl"
-    path.write_text(json.dumps({"global_id": "a:b:1", "surprise": 1}) + "\n", encoding="utf-8")
-    assert ledger.load(path) == {}  # TypeError on Entry(**data), logged and skipped
+def test_an_unknown_field_is_ignored_and_the_entry_still_loads(tmp_path):
+    """An unknown key is DROPPED, not fatal and not a skipped line.
+
+    This changed with the ledger split (addendum 2): reading a file written by a newer
+    version, or a legacy `seen.jsonl` still carrying `alerted_at`, has to cost nothing.
+    Losing the line entirely would re-alert that posting - the failure the ledger exists
+    to prevent.
+    """
+    path = tmp_path / "postings.jsonl"
+    path.write_text(
+        json.dumps({"global_id": "a:b:1", "alerted_at": "2026-01-01", "surprise": 1}) + "\n",
+        encoding="utf-8",
+    )
+    entries = ledger.load(path)
+    assert set(entries) == {"a:b:1"}
+    assert not hasattr(entries["a:b:1"], "surprise")
+
+
+def test_a_malformed_line_is_skipped_not_fatal(tmp_path):
+    """Losing one posting's history costs a duplicate alert; refusing to start costs
+    every alert."""
+    path = tmp_path / "postings.jsonl"
+    path.write_text('{"global_id": "a:b:1"}\nnot json at all\n', encoding="utf-8")
+    assert set(ledger.load(path)) == {"a:b:1"}
 
 
 def test_dry_run_does_not_move_the_ledger(paths, wire):
@@ -326,6 +371,7 @@ def test_the_derived_cache_is_never_left_behind(paths, wire, tmp_path):
     wire(FakeAdapter(jobs(2)))
     runner.run_scheduled(**paths)
     assert sorted(p.name for p in (tmp_path / "state").iterdir()) == [
-        "health.json", "seen.jsonl"
+        "alerted", "health.json", "postings.jsonl"
     ]
+    assert [p.name for p in (tmp_path / "state" / "alerted").iterdir()] == ["default.jsonl"]
     assert not list(tmp_path.glob("*.db"))

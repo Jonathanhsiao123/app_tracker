@@ -184,14 +184,22 @@ def test_empty_digest_sends_hourly_heartbeat():
     assert "No new eligible openings" in captured[0].content.decode()
 
 
-def test_digest_puts_sponsorship_first_and_degree_gated_last():
+def test_digest_is_newest_first_then_sponsorship():
+    """`digest_rank` is date-first since hourly batching landed, and sponsorship is the
+    tie-break within one timestamp.
+
+    Per-profile feeds are ordered by `scoring.sort_candidates` instead; this covers the
+    default batch, which has no profile.
+    """
     gated = (make_posting(company="Gated"), make_analysis("g:1", degree_gated=True))
     sponsors = (make_posting(company="Sponsors"), make_analysis("g:2", eligibility="likely_ok"))
     plain = (make_posting(company="Plain"), make_analysis("g:3"))
     captured = []
     notify.send_digest(client_capturing(captured), [gated, plain, sponsors], "digest")
     body = captured[0].content.decode()
-    assert body.index("Sponsors") < body.index("Plain") < body.index("Gated")
+    # Same posted_at for all three, so eligibility decides: likely_ok, then the two
+    # `unknown`s in global_id order (g:1 Gated, g:3 Plain).
+    assert body.index("Sponsors") < body.index("Gated") < body.index("Plain")
 
 
 # --- pipeline alert (build step 6.4) -----------------------------------------------

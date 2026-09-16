@@ -18,7 +18,9 @@ from html import escape
 
 import httpx
 
+from .analyze import sponsorship
 from .models import AdapterHealth, Analysis, Posting
+from .profiles import Profile
 
 NTFY_TOPIC = os.environ.get("JOBMON_NTFY_TOPIC")
 NTFY_SERVER = os.environ.get("JOBMON_NTFY_SERVER", "https://ntfy.sh")
@@ -119,18 +121,36 @@ def instant_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, float, str]:
     )
 
 
-def format_alert(posting: Posting, analysis: Analysis) -> str:
-    """The alert payload (spec 10). Every field below is required.
+def format_alert(
+    posting: Posting,
+    analysis: Analysis,
+    profile: Profile | None = None,
+    score: float | None = None,
+) -> str:
+    """The alert payload (spec 10, addendum 4). Every field below is required.
 
     The apply URL goes last and bare, so it is tappable on a phone lock screen. The
     evidence sentence is quoted verbatim - it is the whole reason the label is trustworthy,
     and the spec is explicit that the filter labels but does not decide.
+
+    The VISA badge is one line, always present, never buried - unless the profile says
+    `needs_sponsorship: false`, in which case it is omitted entirely (T8.2). A badge about
+    a constraint you do not have is pure noise, and the point of this whole addendum is to
+    stop producing that.
     """
     lines = [f"{posting.company} - {posting.title}"]
     where = ", ".join(posting.locations) or "location not stated"
     if posting.remote_type:
         where += f" ({posting.remote_type})"
     lines.append(where)
+
+    if profile is None or profile.eligibility.needs_sponsorship:
+        lines.append(sponsorship.badge(
+            analysis.eligibility,
+            analysis.sponsor_confidence,
+            analysis.sponsor_evidence,
+            analysis.eligibility_evidence,
+        ))
 
     if analysis.grad_window:
         lines.append(f"Grad window: {analysis.grad_window}")
@@ -141,6 +161,13 @@ def format_alert(posting: Posting, analysis: Analysis) -> str:
     lines.append(f"Eligibility: {label}")
     for sentence in analysis.eligibility_evidence[:2]:
         lines.append(f'  "{sentence}"')
+
+    if analysis.function:
+        # The FULL match list, so a multi-category posting is visible as such (TX.6) even
+        # though it is grouped under one category only.
+        lines.append(f"Categories: {', '.join(analysis.function)}")
+    if score is not None:
+        lines.append(f"Score: {score:.2f}")
 
     summary = " | ".join(", ".join(terms) for terms in analysis.keywords.values() if terms)
     if summary:
@@ -159,6 +186,82 @@ def format_alert(posting: Posting, analysis: Analysis) -> str:
 
     lines.append(posting.apply_url)
     return "\n".join(lines)
+
+
+# --- addendum 5: profile-routed delivery -------------------------------------------------
+
+def send_instant(client: httpx.Client, candidate, profile: Profile) -> bool:
+    """One tier-1 / high-score posting, on its own, on the `routing.instant` channel.
+
+    Individual rather than batched because that is the entire difference between instant
+    and digest: an interruption you act on now, versus a list you read later.
+    """
+    analysis = candidate.analysis
+    priority = 4 if analysis.eligibility == "likely_ok" else 3
+    return _deliver(
+        client,
+        title=EMAIL_SUBJECT,
+        body=format_alert(candidate.posting, analysis, profile, candidate.score),
+        priority=priority,
+        click_url=candidate.posting.apply_url,
+        channel=profile.routing.instant,
+    )
+
+
+def send_profile_digest(
+    client: httpx.Client,
+    candidates: list,
+    profile: Profile,
+    truncated: int = 0,
+    held_by_company: dict[str, int] | None = None,
+) -> bool:
+    """One batch for one profile, already sorted and capped by `scoring`.
+
+    TRUNCATION IS STATED, NOT HIDDEN (T8.6, T8.7). A digest that quietly drops its
+    twenty-sixth item is a digest you stop trusting, and the whole reason the caps are safe
+    to set aggressively is that what they cut is still reachable with one command.
+    """
+    if not candidates:
+        return _deliver(
+            client,
+            title=EMAIL_SUBJECT,
+            body="Hourly scan complete. No new eligible openings were found.",
+            channel=profile.routing.digest,
+        )
+    parts = [
+        format_alert(c.posting, c.analysis, profile, c.score) for c in candidates
+    ]
+    footer = _truncation_notice(profile, truncated, held_by_company)
+    body = "\n\n---\n\n".join(parts) + footer
+    return _deliver(
+        client,
+        title=EMAIL_SUBJECT,
+        body=body,
+        priority=3,
+        html_body=format_digest_html([(c.posting, c.analysis) for c in candidates])
+        + (f"<p><em>{escape(footer.strip())}</em></p>" if footer else ""),
+        channel=profile.routing.digest,
+    )
+
+
+def _truncation_notice(
+    profile: Profile, truncated: int, held_by_company: dict[str, int] | None
+) -> str:
+    notes: list[str] = []
+    if truncated:
+        notes.append(
+            f"{truncated} further matching posting(s) were held back by "
+            f"max_digest_items={profile.limits.max_digest_items}."
+        )
+    for company, count in sorted((held_by_company or {}).items()):
+        notes.append(
+            f"{count} more req(s) from {company} held back by "
+            f"max_per_company_per_day={profile.limits.max_per_company_per_day}."
+        )
+    if not notes:
+        return ""
+    notes.append(f"See all of them with: jobmon list --profile {profile.name} --all")
+    return "\n\n---\n\n" + "\n".join(notes)
 
 
 def send_weekly_summary(
@@ -191,16 +294,29 @@ def _deliver(
     priority: int = 3,
     click_url: str | None = None,
     html_body: str | None = None,
+    channel: str = "all",
 ) -> bool:
-    """Deliver to ntfy and, when configured, SMTP email.
+    """Deliver on the channel(s) a profile's `routing` block names.
 
-    Both configured channels must succeed before the runner marks postings alerted. A
-    partial failure therefore retries next run instead of silently losing one channel.
+    `channel` is one of ntfy | email | all | none (addendum 3). `all` is the default and
+    the pre-addendum behaviour: every configured transport, and ALL of them must succeed
+    before the runner records the alert, so a partial failure retries next run instead of
+    silently losing one channel.
+
+    `none` returns True. A posting routed to `silent` was never meant to be sent, so
+    "delivered nothing successfully" is the honest answer - returning False would make the
+    runner retry it forever.
     """
-    ntfy_ok = _post_ntfy(
-        client, title=title, body=body, priority=priority, click_url=click_url
-    )
-    email_ok = _send_email(title, body, html_body=html_body)
+    if channel == "none":
+        return True
+    ntfy_ok = True
+    email_ok = True
+    if channel in ("ntfy", "all"):
+        ntfy_ok = _post_ntfy(
+            client, title=title, body=body, priority=priority, click_url=click_url
+        )
+    if channel in ("email", "all"):
+        email_ok = _send_email(title, body, html_body=html_body)
     return ntfy_ok and email_ok
 
 

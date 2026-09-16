@@ -1,7 +1,14 @@
 # Scheduled run in a PRIVATE repo. Hourly batches keep email close to posting time.
 #
-# Persistence is the committed ledger at state/seen.jsonl (build step 6). The SQLite file
-# is a derived cache, rebuilt from the ledger into a tmpdir every run and thrown away.
+# Persistence is the committed ledger under state/ (build step 6, addendum 2):
+#
+#   state/postings.jsonl           global:      one line per posting, no alert state
+#   state/alerted/<profile>.jsonl  per profile: one line per delivered alert
+#   state/feedback/<profile>.jsonl per profile: `jobmon mute` / `boost` records
+#
+# The SQLite file is a derived cache, rebuilt from those into a tmpdir every run and thrown
+# away. A pre-addendum state/seen.jsonl in the checkout is migrated into the split files on
+# the first run and then left alone; nothing here needs to change for that to happen.
 #
 # `actions/cache` was considered and REJECTED: entries evict silently after 7 days idle,
 # and the failure mode is a mass re-alert - thousands of notifications for the quietest
@@ -61,8 +68,11 @@ jobs:
       # FIRST RUN SEEDS. With no ledger in the checkout, every currently-open posting is
       # new - over 13,000 on the configured board set (README). `--seed` records them as
       # already-alerted and sends nothing, so the first delivered alert is a posting that
-      # genuinely appeared after jobmon started watching. This is keyed on the file, not
+      # genuinely appeared after jobmon started watching. This is keyed on the files, not
       # on a one-time flag, so a lost ledger costs one quiet cycle instead of a flood.
+      #
+      # A checkout holding only the pre-addendum state/seen.jsonl is NOT a lost ledger: it
+      # is migrated in, so the seed branch deliberately checks for both spellings.
       - name: Run
         id: run
         env:
@@ -75,11 +85,12 @@ jobs:
           JOBMON_EMAIL_TO: ${{ secrets.JOBMON_EMAIL_TO }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          args=(run --ledger state/seen.jsonl)
+          args=(run --ledger state/postings.jsonl)
           if [ "${DRY_RUN}" = "true" ]; then
             args+=(--dry-run)
-          elif [ ! -f state/seen.jsonl ]; then
-            echo "::notice::no ledger at state/seen.jsonl - seeding. This run records" \
+          elif [ ! -f state/postings.jsonl ] && [ ! -f state/seen.jsonl ]; then
+            # Neither the split ledger NOR a pre-addendum seen.jsonl to migrate from.
+            echo "::notice::no ledger under state/ - seeding. This run records" \
                  "every open posting as already-alerted and sends nothing; the next run" \
                  "alerts on genuinely new postings only."
             args+=(--seed)

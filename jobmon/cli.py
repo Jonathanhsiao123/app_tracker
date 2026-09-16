@@ -12,7 +12,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import notify, runner, store
+from . import audit, feedback, notify, profiles, runner, scoring, store
 from .adapters import ats_public
 
 SINCE_UNITS = {"h": "hours", "d": "days", "w": "weeks"}
@@ -51,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="use the committed ledger at this path as the only durable "
                               "state, rebuilding the SQLite cache in a tmpdir (build "
                               "step 6). This is the mode the cron workflow runs.")
+    run_cmd.add_argument("--profile", help="deliver for one profile only; default is "
+                                           "every profile in config/profiles/")
 
     list_cmd = sub.add_parser("list", help="stored postings, newest first")
     list_cmd.add_argument("--since", default="24h", help="e.g. 24h, 3d, 2w")
@@ -58,6 +60,41 @@ def build_parser() -> argparse.ArgumentParser:
                           help="include postings suppressed as ineligible")
     list_cmd.add_argument("--company")
     list_cmd.add_argument("--function", help="filter to one function, e.g. mle")
+    list_cmd.add_argument("--profile", help="score and sort against this profile")
+    list_cmd.add_argument("--all", action="store_true", dest="show_all",
+                          help="include postings this profile routed to silent - the caps "
+                               "and thresholds change what reaches you, never what is stored")
+    list_cmd.add_argument("--resort", action="store_true",
+                          help="re-rank the stored postings against the CURRENT profile. "
+                               "Makes zero network calls: edit priorities.order, re-run "
+                               "this, see the effect in a second (Phase X)")
+
+    audit_cmd = sub.add_parser(
+        "audit", help="what was actually sent, and which lever would cut it (addendum 1)")
+    audit_cmd.add_argument("--days", type=int, default=7)
+    audit_cmd.add_argument("--profile", help="restrict to one profile")
+
+    profiles_cmd = sub.add_parser("profiles", help="loaded profiles and their resolved weights")
+    profiles_cmd.add_argument("--profile", help="show one in full")
+
+    mute_cmd = sub.add_parser("mute", help="never alert me about this posting again")
+    mute_cmd.add_argument("global_id")
+    mute_cmd.add_argument("--profile", required=True)
+    mute_cmd.add_argument("--reason", choices=list(feedback.MUTE_REASONS),
+                          help="what was wrong with it; `jobmon tune` reads these")
+
+    mute_co = sub.add_parser("mute-company", help="never alert me about this employer again")
+    mute_co.add_argument("name")
+    mute_co.add_argument("--profile", required=True)
+    mute_co.add_argument("--reason", choices=list(feedback.MUTE_REASONS))
+
+    boost_cmd = sub.add_parser("boost", help="rank this posting higher")
+    boost_cmd.add_argument("global_id")
+    boost_cmd.add_argument("--profile", required=True)
+
+    tune_cmd = sub.add_parser(
+        "tune", help="propose a profile edit from your mutes. Proposes only - never edits")
+    tune_cmd.add_argument("--profile", required=True)
 
     show_cmd = sub.add_parser("show", help="full record, analysis, evidence sentences")
     show_cmd.add_argument("global_id")
@@ -114,17 +151,26 @@ def cmd_run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_MISCONFIGURED
+    try:
+        chosen = profiles.select(only=args.profile)
+    except profiles.ProfileError as exc:
+        # T8.12: a bad profile stops the run, loudly, before a single board is fetched.
+        # It must never degrade into "alert everything" - that is the flood this whole
+        # layer exists to prevent.
+        print(f"profile config error: {exc}", file=sys.stderr)
+        return EXIT_MISCONFIGURED
     if args.ledger is not None:
         result = runner.run_scheduled(
             ledger_path=args.ledger,
             health_path=args.ledger.parent / "health.json",
             dry_run=args.dry_run,
             seed=args.seed,
+            profile_list=chosen,
         )
     else:
         with _db(args) as conn:
             result = runner.run(conn, dry_run=args.dry_run, seed=args.seed,
-                                adapter=args.adapter)
+                                adapter=args.adapter, profile_list=chosen)
     for health in result.health:
         state = "ERR" if not health.ok else ("WARN" if health.error else "ok ")
         line = (f"  [{state}] {health.adapter}: {health.postings_seen} seen, "
@@ -135,6 +181,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             line += "  <-- ZERO RESULTS, no error: check this"
         print(line)
     print(result.summary())
+    for outcome in result.profiles.values():
+        print("  " + outcome.summary())
     if result.seeded:
         print(f"seeded {result.seeded} postings as already-alerted; nothing was sent")
     if result.retried:
@@ -172,20 +220,80 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """One posting per line - company, title, location, eligibility, variant, grad window."""
+    """One posting per line - company, title, location, eligibility, variant, grad window.
+
+    With `--profile`, every line is scored and routed against that profile and the feed is
+    ordered by its `sort_by` mode. `--resort` is the same thing said out loud: it re-ranks
+    what is already stored, so you can test three orderings in a minute against real
+    postings instead of waiting three hours for the next run (Phase X).
+
+    `--resort` MAKES ZERO NETWORK CALLS. That constraint is the whole reason the feature is
+    safe to experiment with, and TX.8 asserts it rather than assuming it.
+    """
     since = parse_since(args.since)
+    profile = None
+    if args.profile or args.resort:
+        try:
+            profile = profiles.select(only=args.profile)[0] if args.profile \
+                else profiles.select()[0]
+        except profiles.ProfileError as exc:
+            print(f"profile config error: {exc}", file=sys.stderr)
+            return EXIT_MISCONFIGURED
+
     shown = 0
     with _db(args) as conn:
-        for posting, analysis in store.iter_postings(
-            conn, since=since, include_blocked=args.show_blocked, company=args.company
-        ):
-            if args.function and (not analysis or args.function not in analysis.function):
-                continue
-            shown += 1
-            print(_one_line(posting, analysis))
+        rows = [
+            (posting, analysis)
+            for posting, analysis in store.iter_postings(
+                conn, since=since,
+                include_blocked=args.show_blocked or args.show_all,
+                company=args.company,
+            )
+            if not (args.function and (not analysis or args.function not in analysis.function))
+        ]
+        if profile is None:
+            for posting, analysis in rows:
+                shown += 1
+                print(_one_line(posting, analysis))
+        else:
+            from . import config_loader
+
+            tier = config_loader.tier_companies(config_loader.load())
+            applied = store.applied_ids(conn)
+            candidates = [
+                scoring.route(posting, analysis, profile, tier, applied)
+                for posting, analysis in rows
+                if analysis is not None
+            ]
+            if not args.show_all:
+                candidates = [c for c in candidates if c.route != "silent"]
+            group = None
+            for candidate in scoring.sort_candidates(candidates, profile):
+                if profile.roles.priorities.sort_by == "priority" and candidate.group != group:
+                    group = candidate.group
+                    print(f"== {group} ==")
+                shown += 1
+                print(_candidate_line(candidate))
     if not shown:
         print(f"no postings since {args.since}")
     return 0
+
+
+def _candidate_line(candidate) -> str:
+    posting, analysis = candidate.posting, candidate.analysis
+    where = ", ".join(posting.locations) or "-"
+    bits = [
+        f"{candidate.score:.2f}",
+        f"{candidate.route:<7}",
+        posting.global_id,
+        f"{posting.company} - {posting.title}",
+        where,
+        analysis.eligibility,
+        analysis.role_class,
+    ]
+    if candidate.route == "silent" and candidate.reasons:
+        bits.append("(" + "; ".join(candidate.reasons) + ")")
+    return " | ".join(bits)
 
 
 def _one_line(posting, analysis) -> str:
@@ -298,6 +406,105 @@ def cmd_reanalyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    """`jobmon audit --days 7` (addendum 1). Measure before you filter."""
+    with _db(args) as conn:
+        report = audit.collect(conn, days=args.days, profile=args.profile)
+    print(audit.render(report))
+    return 0
+
+
+def cmd_profiles(args: argparse.Namespace) -> int:
+    """Show what actually loaded, including the rank-derived category weights. The weights
+    are the one part of the config you never write by hand, so they are the one part worth
+    printing back."""
+    try:
+        loaded = profiles.select(only=args.profile)
+    except profiles.ProfileError as exc:
+        print(f"profile config error: {exc}", file=sys.stderr)
+        return EXIT_MISCONFIGURED
+    for profile in loaded:
+        print(f"{profile.name}  ({profile.path or 'built-in defaults'})")
+        pri = profile.roles.priorities
+        ranked = ", ".join(f"{c} {pri.resolved[c]:.2f}" for c in pri.order) or "-"
+        print(f"  priorities   order: {ranked}")
+        print(f"               never: {', '.join(pri.never) or '-'}   "
+              f"sort_by: {pri.sort_by}")
+        print(f"  eligibility  needs_sponsorship={profile.eligibility.needs_sponsorship} "
+              f"blocked={profile.eligibility.on_blocked} "
+              f"unknown={profile.eligibility.on_unknown} "
+              f"likely_ok={profile.eligibility.on_likely_ok}")
+        print(f"  roles        {', '.join(profile.roles.role_class)} | "
+              f"unclear={profile.roles.on_unclear_role} | "
+              f"degree_gated={profile.roles.degree_gated} | "
+              f"max_yoe={profile.roles.max_yoe}")
+        lim = profile.limits
+        print(f"  limits       min_score={lim.min_score} instant/day="
+              f"{lim.max_instant_per_day} digest={lim.max_digest_items} "
+              f"company/day={lim.max_per_company_per_day}")
+        print(f"  denylist     {len(profile.denylist.companies)} companies, "
+              f"{len(profile.denylist.title_terms)} title terms, "
+              f"{len(profile.denylist.postings)} muted postings")
+        print(f"  routing      instant={profile.routing.instant} "
+              f"digest={profile.routing.digest}")
+    return 0
+
+
+def cmd_mute(args: argparse.Namespace) -> int:
+    """`jobmon mute <global_id> --reason wrong-function` (addendum 6).
+
+    Appends to the profile's denylist and records the reason. The profile YAML itself is
+    NOT edited: the entry goes to `state/feedback/<profile>.jsonl` and is merged into the
+    denylist at load time, so nothing you hand-wrote is silently changed (T8.11).
+    """
+    with _db(args) as conn:
+        posting = store.get_posting(conn, args.global_id)
+        if posting is None:
+            print(f"unknown global_id {args.global_id!r}", file=sys.stderr)
+            return 1
+        analysis = store.get_analysis(conn, args.global_id)
+    function = (analysis.function[0] if analysis and analysis.function else None)
+    feedback.record(args.profile, "mute", args.global_id, reason=args.reason,
+                    function=function, company=posting.company)
+    print(f"muted {args.global_id} for profile {args.profile!r}"
+          + (f" (reason: {args.reason})" if args.reason else ""))
+    print(f"  recorded in {feedback.path_for(args.profile)}; "
+          f"your profile YAML was not modified")
+    return 0
+
+
+def cmd_mute_company(args: argparse.Namespace) -> int:
+    feedback.record(args.profile, "mute_company", args.name, reason=args.reason,
+                    company=args.name)
+    print(f"muted company {args.name!r} for profile {args.profile!r}")
+    return 0
+
+
+def cmd_boost(args: argparse.Namespace) -> int:
+    with _db(args) as conn:
+        if store.get_posting(conn, args.global_id) is None:
+            print(f"unknown global_id {args.global_id!r}", file=sys.stderr)
+            return 1
+    feedback.record(args.profile, "boost", args.global_id)
+    print(f"boosted {args.global_id} for profile {args.profile!r}")
+    return 0
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    """Report the most common mute reason and propose a concrete profile edit.
+
+    It PROPOSES. You edit the YAML. There is no automatic self-tuning here on purpose: a
+    system that silently changes its own filters is one that silently stops showing you
+    jobs.
+    """
+    summary, proposals = feedback.tune(args.profile)
+    print(summary)
+    for proposal in proposals:
+        print()
+        print(proposal)
+    return 0
+
+
 def cmd_init_db(args: argparse.Namespace) -> int:
     with _db(args) as conn:
         store.init_db(conn)
@@ -321,6 +528,12 @@ COMMANDS = {
     "funnel": cmd_funnel,
     "health": cmd_health,
     "reanalyze": cmd_reanalyze,
+    "audit": cmd_audit,
+    "profiles": cmd_profiles,
+    "mute": cmd_mute,
+    "mute-company": cmd_mute_company,
+    "boost": cmd_boost,
+    "tune": cmd_tune,
 }
 
 

@@ -168,10 +168,9 @@ def test_mark_alerted_is_written_after_delivery(conn):
     p = make()
     run(conn, [p])
     assert store.get_posting(conn, p.global_id) is not None
-    assert conn.execute(
-        "SELECT alerted_at FROM postings WHERE global_id = ?", (p.global_id,)
-    ).fetchone()["alerted_at"] is None
+    # Alert state lives in the per-profile `alerts` table, not on the posting row: since
+    # the addendum, "we have this posting" and "we told profile X about it" are two facts.
+    assert store.alerted_at(conn, p.global_id) is None
     store.mark_alerted(conn, [p.global_id], datetime.now(UTC))
-    assert conn.execute(
-        "SELECT alerted_at FROM postings WHERE global_id = ?", (p.global_id,)
-    ).fetchone()["alerted_at"] is not None
+    assert store.alerted_at(conn, p.global_id) is not None
+    assert store.alerted_at(conn, p.global_id, profile="someone-else") is None

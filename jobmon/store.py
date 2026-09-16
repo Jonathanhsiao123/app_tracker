@@ -26,6 +26,10 @@ DB_PATH = Path("jobmon.db")
 
 FUZZY_WINDOW_DAYS = 60
 
+# The profile every per-profile write is attributed to when the caller names none. Keeps
+# every single-profile call site (and every pre-addendum test) working unchanged.
+DEFAULT_PROFILE = "default"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,12 +55,25 @@ CREATE TABLE IF NOT EXISTS postings (
     raw_json            TEXT NOT NULL,
     locale              TEXT NOT NULL DEFAULT 'US',
     reposted_count      INTEGER NOT NULL DEFAULT 0,
-    alerted_at          TEXT,
     last_seen_run       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_postings_fuzzy
     ON postings (normalized_company, normalized_title, first_location);
 CREATE INDEX IF NOT EXISTS idx_postings_first_seen ON postings (first_seen_at);
+
+-- Addendum 2, build step 1. "We have this posting" and "we alerted about it" are two
+-- different facts, and they used to be one column (`postings.alerted_at`). With profiles
+-- they cannot be: profile A alerting on a posting must not silence profile B, which is
+-- exactly what a single global flag does. One row per (posting, profile).
+CREATE TABLE IF NOT EXISTS alerts (
+    global_id  TEXT NOT NULL REFERENCES postings(global_id),
+    profile    TEXT NOT NULL,
+    alerted_at TEXT NOT NULL,
+    channel    TEXT NOT NULL,
+    score      REAL,
+    PRIMARY KEY (global_id, profile)
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_profile_time ON alerts (profile, alerted_at);
 
 CREATE TABLE IF NOT EXISTS duplicates (
     global_id         TEXT NOT NULL,
@@ -79,6 +96,10 @@ CREATE TABLE IF NOT EXISTS analysis (
     variant_scores_json       TEXT NOT NULL,
     degree_gated              INTEGER NOT NULL DEFAULT 0,
     yoe_floor                 INTEGER,
+    text_eligibility          TEXT NOT NULL DEFAULT 'unknown',
+    sponsor_confidence        TEXT NOT NULL DEFAULT 'unknown',
+    sponsor_evidence          TEXT,
+    blocking_groups_json      TEXT NOT NULL DEFAULT '[]',
     analyzed_at               TEXT NOT NULL
 );
 
@@ -120,9 +141,28 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after `SCHEMA` first shipped. `CREATE TABLE IF NOT EXISTS` is a no-op on
+# an existing table, so a jobmon.db from before the addendum would keep its old `analysis`
+# shape and every insert would fail on the new column list. Still no migrations framework -
+# just the list of what to add, applied when absent.
+ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("analysis", "text_eligibility", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("analysis", "sponsor_confidence", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("analysis", "sponsor_evidence", "TEXT"),
+    ("analysis", "blocking_groups_json", "TEXT NOT NULL DEFAULT '[]'"),
+]
+
+
 def init_db(conn: sqlite3.Connection) -> None:
-    """Execute `SCHEMA`. Idempotent."""
+    """Execute `SCHEMA`, then add any column a pre-existing table is missing. Idempotent."""
     conn.executescript(SCHEMA)
+    for table, column, decl in ADDED_COLUMNS:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if existing and column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # A pre-addendum `postings` table still carries `alerted_at`. It is left in place
+    # (SQLite drops columns only on new-ish versions, and nothing reads it any more); the
+    # ledger migration in `ledger.migrate_legacy` is what carries its content across.
     conn.commit()
 
 
@@ -191,8 +231,8 @@ def upsert_posting(
                global_id, source, company, normalized_company, title, normalized_title,
                first_location, locations_json, remote_type, description_html,
                description_text, apply_url, posted_at, first_seen_at, last_seen_at,
-               raw_json, locale, reposted_count, alerted_at, last_seen_run)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?)""",
+               raw_json, locale, reposted_count, last_seen_run)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
         (
             posting.global_id, posting.source, posting.company, norm_company,
             posting.title, norm_title, first_location, json.dumps(posting.locations),
@@ -269,32 +309,148 @@ def iter_postings(
         yield _row_to_posting(row), get_analysis(conn, row["global_id"])
 
 
-def unalerted_postings(conn: sqlite3.Connection, run_id: int) -> list[Posting]:
-    """Postings seen in this run that have never been delivered.
+def unalerted_postings(
+    conn: sqlite3.Connection, run_id: int, profile: str = DEFAULT_PROFILE
+) -> list[Posting]:
+    """Postings seen in this run that have never been delivered TO THIS PROFILE.
 
     This, not "the upsert said new", is what drives alerting. A posting whose notification
     failed last run is stored and no longer new, so keying off the upsert outcome would
     lose it permanently - the exact failure `_send` claims not to have. Duplicates and
     reposts are excluded here because they were alerted under their original global_id.
+
+    Addendum 2, build step 1: the NOT EXISTS is scoped to one profile. Previously this
+    read `postings.alerted_at IS NULL`, a single global flag, so the first profile to
+    alert on a posting silenced every other profile for good (T8.1).
     """
     rows = conn.execute(
         """SELECT p.* FROM postings p
            LEFT JOIN duplicates d ON d.global_id = p.global_id
-           WHERE p.last_seen_run = ? AND p.alerted_at IS NULL AND d.global_id IS NULL
+           WHERE p.last_seen_run = ? AND d.global_id IS NULL
+             AND NOT EXISTS (SELECT 1 FROM alerts a
+                             WHERE a.global_id = p.global_id AND a.profile = ?)
            ORDER BY p.first_seen_at""",
-        (run_id,),
+        (run_id, profile),
     ).fetchall()
     return [_row_to_posting(r) for r in rows]
 
 
-def mark_alerted(conn: sqlite3.Connection, global_ids: list[str], at: datetime) -> None:
-    """Record that these went out. Called AFTER the notifier confirms delivery, never
-    before: a commit ahead of a failed notify loses that alert permanently."""
+def mark_alerted(
+    conn: sqlite3.Connection,
+    global_ids: list[str],
+    at: datetime,
+    profile: str = DEFAULT_PROFILE,
+    channel: str = "digest",
+    scores: dict[str, float] | None = None,
+) -> None:
+    """Record that these went out for one profile. Called AFTER the notifier confirms
+    delivery, never before: a commit ahead of a failed notify loses that alert permanently.
+
+    `INSERT OR IGNORE` rather than a plain insert: re-delivering a posting that is already
+    recorded for this profile is a no-op, not a crash. The first delivery's timestamp is
+    the one worth keeping.
+    """
+    scores = scores or {}
     conn.executemany(
-        "UPDATE postings SET alerted_at = ? WHERE global_id = ?",
-        [(_iso(at), gid) for gid in global_ids],
+        """INSERT OR IGNORE INTO alerts (global_id, profile, alerted_at, channel, score)
+           VALUES (?,?,?,?,?)""",
+        [(gid, profile, _iso(at), channel, scores.get(gid)) for gid in global_ids],
     )
     conn.commit()
+
+
+def alerted_at(
+    conn: sqlite3.Connection, global_id: str, profile: str = DEFAULT_PROFILE
+) -> datetime | None:
+    """When this profile was told about this posting, or None."""
+    row = conn.execute(
+        "SELECT alerted_at FROM alerts WHERE global_id = ? AND profile = ?",
+        (global_id, profile),
+    ).fetchone()
+    return datetime.fromisoformat(row["alerted_at"]) if row else None
+
+
+def alerts_since(
+    conn: sqlite3.Connection, since: datetime, profile: str | None = None
+) -> list[sqlite3.Row]:
+    """Alert rows delivered at or after `since`, newest first.
+
+    Feeds both `jobmon audit` (addendum 1) and the per-day caps in `limits` (addendum 5):
+    "how many instants have I already sent today" is a question about this table and
+    nothing else.
+    """
+    sql = ["SELECT * FROM alerts WHERE alerted_at >= ?"]
+    args: list[object] = [_iso(since)]
+    if profile is not None:
+        sql.append("AND profile = ?")
+        args.append(profile)
+    sql.append("ORDER BY alerted_at DESC")
+    return conn.execute(" ".join(sql), args).fetchall()
+
+
+def count_alerts_since(
+    conn: sqlite3.Connection,
+    since: datetime,
+    profile: str,
+    channel: str | None = None,
+    company: str | None = None,
+) -> int:
+    """How many alerts this profile has already sent in the window. Drives
+    `max_instant_per_day` and `max_per_company_per_day` (addendum 5).
+
+    The company filter joins back to `postings` and compares normalized names, so
+    "Acme, Inc." and "acme" count against one cap rather than two.
+    """
+    sql = ["SELECT COUNT(*) AS n FROM alerts a",
+           "JOIN postings p ON p.global_id = a.global_id",
+           "WHERE a.alerted_at >= ? AND a.profile = ?"]
+    args: list[object] = [_iso(since), profile]
+    if channel is not None:
+        sql.append("AND a.channel = ?")
+        args.append(channel)
+    if company is not None:
+        sql.append("AND p.normalized_company = ?")
+        args.append(normalize_company(company))
+    row = conn.execute(" ".join(sql), args).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def alerts_by_company_since(
+    conn: sqlite3.Connection, since: datetime, profile: str
+) -> dict[str, int]:
+    """Normalized company -> alerts already sent to this profile in the window.
+
+    Seeds `max_per_company_per_day` across an hourly cron: without it a per-DAY cap would
+    reset twenty-four times a day and cap nothing.
+    """
+    rows = conn.execute(
+        """SELECT p.normalized_company AS company, COUNT(*) AS n
+           FROM alerts a JOIN postings p ON p.global_id = a.global_id
+           WHERE a.alerted_at >= ? AND a.profile = ?
+           GROUP BY p.normalized_company""",
+        (_iso(since), profile),
+    ).fetchall()
+    return {r["company"]: int(r["n"]) for r in rows}
+
+
+def reposted_ids(conn: sqlite3.Connection, minimum: int = 1) -> set[str]:
+    """Postings the store has seen disappear and come back at least `minimum` times.
+
+    `Posting` deliberately carries no store bookkeeping - it is what an adapter produces -
+    so `limits.suppress_reposts` asks the store rather than reading a field off the record.
+    Repeatedly reposted reqs are often ghost jobs.
+    """
+    return {
+        r["global_id"]
+        for r in conn.execute(
+            "SELECT global_id FROM postings WHERE reposted_count >= ?", (minimum,)
+        )
+    }
+
+
+def applied_ids(conn: sqlite3.Connection) -> set[str]:
+    """Postings you have recorded an application against. `suppress_if_applied` (T8.8)."""
+    return {r["global_id"] for r in conn.execute("SELECT global_id FROM applications")}
 
 
 # --- analysis -----------------------------------------------------------------------
@@ -306,8 +462,9 @@ def upsert_analysis(conn: sqlite3.Connection, analysis: Analysis) -> None:
         """INSERT INTO analysis (global_id, role_class, function_json, eligibility,
                eligibility_evidence_json, grad_window, keywords_json, gaps_json,
                recommended_variant, variant_scores_json, degree_gated, yoe_floor,
-               analyzed_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               text_eligibility, sponsor_confidence, sponsor_evidence,
+               blocking_groups_json, analyzed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(global_id) DO UPDATE SET
                role_class=excluded.role_class, function_json=excluded.function_json,
                eligibility=excluded.eligibility,
@@ -317,13 +474,19 @@ def upsert_analysis(conn: sqlite3.Connection, analysis: Analysis) -> None:
                recommended_variant=excluded.recommended_variant,
                variant_scores_json=excluded.variant_scores_json,
                degree_gated=excluded.degree_gated, yoe_floor=excluded.yoe_floor,
+               text_eligibility=excluded.text_eligibility,
+               sponsor_confidence=excluded.sponsor_confidence,
+               sponsor_evidence=excluded.sponsor_evidence,
+               blocking_groups_json=excluded.blocking_groups_json,
                analyzed_at=excluded.analyzed_at""",
         (
             analysis.global_id, analysis.role_class, json.dumps(analysis.function),
             analysis.eligibility, json.dumps(analysis.eligibility_evidence),
             analysis.grad_window, json.dumps(analysis.keywords), json.dumps(analysis.gaps),
             analysis.recommended_variant, json.dumps(analysis.variant_scores),
-            int(analysis.degree_gated), analysis.yoe_floor, _iso(datetime.now(UTC)),
+            int(analysis.degree_gated), analysis.yoe_floor, analysis.text_eligibility,
+            analysis.sponsor_confidence, analysis.sponsor_evidence,
+            json.dumps(analysis.blocking_groups), _iso(datetime.now(UTC)),
         ),
     )
     conn.commit()
@@ -346,6 +509,10 @@ def get_analysis(conn: sqlite3.Connection, global_id: str) -> Analysis | None:
         grad_window=row["grad_window"],
         degree_gated=bool(row["degree_gated"]),
         yoe_floor=row["yoe_floor"],
+        text_eligibility=row["text_eligibility"],
+        sponsor_confidence=row["sponsor_confidence"],
+        sponsor_evidence=row["sponsor_evidence"],
+        blocking_groups=json.loads(row["blocking_groups_json"]),
     )
 
 
