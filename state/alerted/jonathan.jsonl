@@ -7,3 +7,4 @@
 {"alerted_at":"2026-09-16T17:04:18.677903+00:00","channel":"digest","global_id":"ashby:notion:0d000633-4a69-4dae-ab5f-da19b5ab8cc0","score":0.43}
 {"alerted_at":"2026-09-16T17:04:18.677903+00:00","channel":"digest","global_id":"greenhouse:cloudflare:8203784","score":0.41125}
 {"alerted_at":"2026-09-17T01:29:10.815599+00:00","channel":"digest","global_id":"github_repo:waymo:66af60b3a4a0eaff","score":0.575}
+{"alerted_at":"2026-09-17T07:44:48.990801+00:00","channel":"digest","global_id":"ashby:ramp:a85afad0-8051-4333-ae89-0f82321dea87","score":0.58}
