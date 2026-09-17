@@ -8,3 +8,8 @@
 {"alerted_at":"2026-09-16T17:04:18.677903+00:00","channel":"digest","global_id":"greenhouse:cloudflare:8203784","score":0.41125}
 {"alerted_at":"2026-09-17T01:29:10.815599+00:00","channel":"digest","global_id":"github_repo:waymo:66af60b3a4a0eaff","score":0.575}
 {"alerted_at":"2026-09-17T07:44:48.990801+00:00","channel":"digest","global_id":"ashby:ramp:a85afad0-8051-4333-ae89-0f82321dea87","score":0.58}
+{"alerted_at":"2026-09-17T13:33:17.312881+00:00","channel":"digest","global_id":"greenhouse:cloudflare:8188899","score":0.528}
+{"alerted_at":"2026-09-17T13:33:17.312881+00:00","channel":"digest","global_id":"greenhouse:cloudflare:8207509","score":0.43}
+{"alerted_at":"2026-09-17T13:33:17.312881+00:00","channel":"digest","global_id":"lever:woven:46b183ab-385a-432f-b2d2-16bdfb9113d3","score":0.5569999999999999}
+{"alerted_at":"2026-09-17T13:33:17.312881+00:00","channel":"digest","global_id":"lever:woven:90290fd7-0f67-4727-acac-1b6ab18198d3","score":0.18}
+{"alerted_at":"2026-09-17T13:33:17.312881+00:00","channel":"digest","global_id":"lever:woven:fce9aba6-af37-45c9-9263-503a9c01ef1b","score":0.503}
