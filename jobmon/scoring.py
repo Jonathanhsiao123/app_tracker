@@ -167,11 +167,29 @@ def score(
         breakdown["degree_gated"] = -w.penalty_degree_gated
     if analysis.yoe_floor is not None and analysis.yoe_floor > profile.roles.max_yoe:
         breakdown["yoe_over"] = -w.penalty_yoe_over
-    if profile.eligibility.needs_sponsorship and not confidence_meets(
-        analysis.sponsor_confidence, profile.eligibility.min_sponsor_confidence
+    if (
+        profile.eligibility.needs_sponsorship
+        and analysis.sponsor_confidence != "unknown"
+        and not confidence_meets(
+            analysis.sponsor_confidence, profile.eligibility.min_sponsor_confidence
+        )
     ):
         # Addendum 4: `min_sponsor_confidence` downranks. It does not suppress unless
         # `on_below_min_sponsor` is set to say so, which the policy layer handles.
+        #
+        # `unknown` IS EXEMPT, and that exemption is load-bearing. `unknown` means "no DOL
+        # match", which the addendum itself reads as a fuzzy-name miss or a small employer
+        # - not evidence of refusal - which is why CONFIDENCE_SCORE already puts it at 0.5,
+        # mid-scale, rather than at the bottom. Charging the penalty on top of that scored
+        # it twice for the same missing fact.
+        #
+        # The cost of getting this wrong was total, not marginal. With `sponsor_history`
+        # unpopulated every employer is `unknown`, so the penalty applied to 321 of 321
+        # candidates on a measured sweep - a uniform offset, which ranks nothing and is
+        # arithmetically just `min_score + 0.10` with the ranking signal destroyed. Between
+        # that and the halved eligibility term, every posting lost 0.175 of a 1.0 scale and
+        # `min_score: 0.55` admitted 0 of 321. A penalty that fires on everything is not a
+        # penalty; it is a calibration error wearing one's clothes.
         breakdown["below_min_sponsor"] = -w.penalty_below_min_sponsor
     if posting.global_id in profile.boosted:
         breakdown["boost"] = w.boost_bonus
@@ -222,6 +240,13 @@ def policy_ceiling(
     # --- location ----------------------------------------------------------------------
     if _denied_location(posting, profile):
         lower("silent", "location is on the deny list")
+    # `allow` as an actual allow-list, not merely a scoring hint. Skipped when `allow` is
+    # empty, which is the "I have not thought about location" case and must stay permissive.
+    if profile.locations.allow and location_match(posting, profile) == 0.0:
+        where = ", ".join(posting.locations) or "no location stated"
+        lower(_disposition_ceiling(profile.locations.on_mismatch),
+              f"location {where!r} matches neither allow nor prefer -> "
+              f"{profile.locations.on_mismatch}")
 
     # --- role --------------------------------------------------------------------------
     role_class = analysis.role_class

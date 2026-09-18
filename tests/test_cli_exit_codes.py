@@ -59,7 +59,7 @@ def install(monkeypatch, adapter):
     monkeypatch.setattr(runner, "enabled_adapters", lambda: [adapter])
     monkeypatch.setattr(runner.notify, "send_instant", lambda c, cand, prof: True)
     monkeypatch.setattr(runner.notify, "send_profile_digest",
-                        lambda c, cands, prof, truncated=0, held=None: True)
+                        lambda c, cands, prof, truncated=0, held=None, **kw: True)
 
 
 # --- the missing secret: red, but say which secret ----------------------------------
@@ -236,7 +236,7 @@ def test_all_openings_are_sent_in_one_digest(monkeypatch, conn_tier):
                         lambda c, cand, prof: calls.__setitem__("alerts", calls["alerts"] + 1)
                         or True)
     monkeypatch.setattr(notify, "send_profile_digest",
-                        lambda c, cands, prof, truncated=0, held=None:
+                        lambda c, cands, prof, truncated=0, held=None, **kw:
                         calls["digests"].append(len(cands)) or True)
 
     outcome = runner._deliver_profile(

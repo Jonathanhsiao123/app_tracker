@@ -376,3 +376,50 @@ def parse_datetime(value: Any) -> datetime | None:
         log.debug("unparseable datetime %r", value)
         return None
     return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+# --- ATS job identity -------------------------------------------------------------------
+#
+# The opaque per-req id an applicant tracking system puts in its own apply URL. Ashby and
+# Lever use UUIDs, Greenhouse a long digit run, Workday an R-number.
+#
+# This is the ONLY exact cross-source identity this project has. The same req reaches the
+# store from an ATS board and from two or three curated GitHub lists, each spelling the
+# title and the location slightly differently - "Embedded Software Engineering Intern" in
+# Pittsburgh, PA and "Embedded Software Engineer Intern - RoboSPLAT - Field Infra" in
+# Pittsburgh - so the (company, title, location) fuzzy key misses all of them, and the
+# digest carried the same job three times. Measured on the 2026-09-17 sweep: 11 of 78
+# alertable postings, 14%, were redundant copies.
+#
+# Matching on the id is not a loosening of the dedup rule, it is a tightening: two URLs
+# carrying the same ATS req id under the same employer ARE one job, with no judgement call
+# about how similar two titles have to be. `normalize_title` edit distance is still
+# deliberately not implemented - see `find_fuzzy_duplicate`.
+_ATS_TOKEN_PATTERNS = (
+    # UUID (Ashby, Lever, some Workable)
+    re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE),
+    # Greenhouse ?gh_jid=8204086 - checked before the /jobs/ form because a Simplify link
+    # carries the canonical id in the query string and a board slug in the path.
+    re.compile(r"[?&]gh_jid=(\d{6,})"),
+    # Greenhouse / Lever / Ashby path form: /jobs/8204086
+    re.compile(r"/(?:jobs?|postings)/(\d{6,})"),
+    # Workday requisition: ..._R22589
+    re.compile(r"_(R\d{4,})(?:\b|$)", re.IGNORECASE),
+)
+
+
+def ats_job_token(url: str | None) -> str | None:
+    """The ATS's own req id from an apply URL, lowercased. None when there isn't one.
+
+    None is common and must stay harmless: a curated-repo row can point at a company's own
+    careers page with no id in it at all (11 of 78 on the measured sweep). Callers treat
+    None as "no opinion" and fall back to the fuzzy key - never as "matches everything".
+    """
+    if not url:
+        return None
+    for pattern in _ATS_TOKEN_PATTERNS:
+        match = pattern.search(url)
+        if match:
+            return (match.group(1) if match.groups() else match.group(0)).lower()
+    return None
+

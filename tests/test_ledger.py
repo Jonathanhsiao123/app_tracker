@@ -62,7 +62,7 @@ def wire(monkeypatch):
         )
         monkeypatch.setattr(
             runner.notify, "send_profile_digest",
-            lambda c, cands, prof, truncated=0, held=None: _digest(
+            lambda c, cands, prof, truncated=0, held=None, **kw: _digest(
                 c, [(x.posting, x.analysis) for x in cands], "digest"),
         )
         return sent
@@ -240,7 +240,7 @@ def test_t6_7_a_raising_adapter_does_not_stop_the_others(paths, wire, monkeypatc
     monkeypatch.setattr(runner, "enabled_adapters", lambda: [bad, good])
     monkeypatch.setattr(runner.notify, "send_instant", lambda c, cand, prof: True)
     monkeypatch.setattr(runner.notify, "send_profile_digest",
-                        lambda c, cands, prof, truncated=0, held=None: True)
+                        lambda c, cands, prof, truncated=0, held=None, **kw: True)
     result = runner.run_scheduled(**paths)
     assert result.adapters_failed == 1
     assert result.new == 2  # the good adapter still ran

@@ -96,7 +96,7 @@ def wire(monkeypatch):
         )
         monkeypatch.setattr(
             runner.notify, "send_profile_digest",
-            lambda c, cands, prof, truncated=0, held=None: (
+            lambda c, cands, prof, truncated=0, held=None, **kw: (
                 sent["digests"].append([x.global_id for x in cands]), digest_ok)[1],
         )
         return sent

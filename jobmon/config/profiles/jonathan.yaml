@@ -47,30 +47,64 @@ locations:
 
 # --- noise control ------------------------------------------------------
 #
-# TWO CALIBRATION TRAPS, both measured against a real 17,095-posting sweep on 2026-09-15:
+# CALIBRATED FROM A MEASURED SWEEP, NOT FROM INTUITION (addendum 1). Numbers below are from
+# a real 17,292-posting sweep on 2026-09-17, scored against this profile:
 #
-#  1. `min_score` is only meaningful next to the scores real postings get. On that sweep:
-#     a Gecko Robotics embedded internship in Pittsburgh scored 0.73, an ordinary MLE req
-#     in an allowed-but-not-preferred city scored 0.57, and an unremarkable SWE req with
-#     no keyword hits scored under 0.45. 0.55 passed 4 of 410 candidates to the digest.
-#     Move it from `jobmon audit`, not from intuition.
+#   321  postings first seen in the last 24h  (the pool one day of alerts is drawn from)
+#   154  of those the policy layer lets reach digest-or-louder
+#        (the other 167 are role_class `experienced`, `quant`, clearance/ITAR, or blocked)
 #
-#  2. `min_sponsor_confidence: occasional` costs every posting a flat 0.10 while
-#     `sponsor_history.yaml` is still empty - with no filing data, every employer is
-#     `unknown`, which is below `occasional`. So 0.55 currently behaves like 0.65. Run
-#     scripts/build_sponsor_history.py and that penalty stops being uniform.
+#   min_score | qualifying items per 24h
+#      0.55   |    13
+#      0.45   |    20
+#      0.40   |    33
+#      0.35   |    38
+#      0.30   |    43   <-- set here
+#      0.25   |    89
 #
-# A tier-1 company still reaches `instant` below `min_score` - that is the point of the
-# tier list, and `max_instant_per_day` is what bounds it. On the same sweep that sent a
-# "Recruiting Coordinator" req from a tier-1 employer to the phone. If that happens to you,
-# the fix is to prune `tier: true` in companies.yaml, not to raise the threshold here.
+# WHAT 0.55 ACTUALLY DID. It admitted **0 of 321**. The previous note in this file guessed
+# that "0.55 passed 4 of 410 candidates"; measured, it passed none, and the four digest
+# items that did arrive were tier-1 companies riding the tier bypass at scores of 0.18 to
+# 0.43 - i.e. the threshold was not selecting good postings, it was selecting nothing, and
+# the mail was made entirely of the exception to it.
+#
+# Two compounding causes, both now fixed in code:
+#   1. `sponsor_history.yaml` is empty, so every employer scores `unknown`, which cost each
+#      posting half the eligibility term (0.075 of 0.15).
+#   2. `min_sponsor_confidence: occasional` then charged a FLAT 0.10 on top - to 321 of 321
+#      candidates. `scoring.score` now exempts `unknown` from that penalty: no data is not
+#      evidence of refusal, and a penalty that fires on 100% of rows ranks nothing.
+# Together those docked 0.175 of a 1.0 scale from every posting, so 0.55 behaved like
+# 0.725 - above the observed maximum score of any posting in the sweep.
+#
+# THE CAPS, NOT THE THRESHOLD, ARE THE GUARANTEE (addendum 5). 0.30 is deliberately loose:
+# `max_digest_items` and `max_per_company_per_day` bound what actually arrives, and they
+# bound it by taking the HIGHEST-SCORING items first. A loose threshold with tight caps
+# gives you the best 25; a tight threshold gives you an empty inbox and no ranking at all.
+# Re-measure with `jobmon audit --days 7` before moving this.
 limits:
-  min_score: 0.55                  # below this: stored, not alerted
+  min_score: 0.30                  # below this: stored, not alerted. MEASURED - see above
   max_instant_per_day: 8
   max_digest_items: 25
   max_per_company_per_day: 3       # stops one employer flooding a digest
   suppress_if_applied: true
   suppress_reposts: true
+
+  # --- the still-open recap ---------------------------------------------------------
+  # An hourly sweep finds ~40 qualifying postings per DAY, so roughly one or two per run.
+  # A digest holding only those is technically correct and not worth opening, and on a
+  # quiet hour it is the sentence "no new eligible openings were found".
+  #
+  # So the digest carries a second section: the best still-open postings from the last
+  # `recap_days`, one compact line each, grouped by `priorities.order`. Measured on the
+  # same sweep, 1,029 postings were first seen in the last 3 days AND still live, of which
+  # 133 clear `min_score` and the policy layer - so this section is always full.
+  #
+  # Recap items are NEVER marked alerted. They recur every run until the employer takes
+  # the posting down or you `jobmon apply`, which is what makes it a standing list rather
+  # than a second chance to miss something.
+  recap_days: 3                    # today plus the two days before it
+  max_recap_items: 25
 
 denylist:
   companies: []
@@ -78,7 +112,15 @@ denylist:
   # `postings:` is appended to by `jobmon mute`, via state/feedback/jonathan.jsonl.
   # You can also list global_ids here by hand.
 
+# ntfy | email | all | none.
+#
+# `instant: all`, NOT `ntfy`. Instants are the highest-scoring postings the system finds,
+# and routing them to the phone ONLY meant they never appeared in the mail at all - so the
+# email channel carried the digest, the digest was empty (see `limits` above), and the mail
+# was empty while the good postings went somewhere else. If the two channels ever disagree
+# about a posting, the quiet one wins by accident. Send instants to both and let the digest
+# be the thing that is merely thorough.
 routing:
-  instant: ntfy                    # tier-1 companies and score > 0.8
-  digest: email                    # twice daily
-  silent: none                     # stored only, visible via `jobmon list`
+  instant: all                     # tier-1 companies and score >= 0.8: phone AND mail
+  digest: email                    # every sweep, ~hourly
+  silent: none                     # stored only, visible via `jobmon list --all`

@@ -22,19 +22,43 @@
 # to zero - is pushed to the ntfy topic by `jobmon run` itself, which exits 3 to say
 # "reported, already delivered, do not turn this red".
 #
-# ADDENDUM: HOURLY HEARTBEAT. `jobmon run` only emails when it finds a genuinely new,
-# unalerted posting - by design (see above), it does NOT email on every run. That means
-# a quiet hour produces zero email, which reads from the outside as "email is broken" even
-# though nothing is broken. The "Heartbeat email" step below is a SEPARATE, unconditional
-# notification - it fires every successful run regardless of whether jobmon found anything,
-# so you get proof-of-life every hour. It reuses the same SMTP secrets and does not touch
-# jobmon's own alerting logic at all.
+# PROOF OF LIFE IS THE DIGEST ITSELF. There used to be a separate "Heartbeat email" step
+# here, added because `jobmon run` appeared to email only when it found something new, so a
+# quiet hour looked identical to a broken pipeline. It has been REMOVED, because it was
+# treating a symptom of two real bugs that are now fixed:
+#
+#   * the digest was empty on almost every run - `min_score: 0.55` admitted 0 of 321
+#     candidates on a measured sweep (see the profile YAML), so the mail that did arrive
+#     said "no new eligible openings were found" and the heartbeat was the only other mail;
+#   * `routing.instant: ntfy` sent the few postings that did qualify to the phone ONLY,
+#     so they never appeared in email at all.
+#
+# `jobmon run` now delivers a digest on EVERY sweep - new postings first, then the
+# still-open recap from the last `recap_days` - so the digest is the proof of life, and it
+# carries the run gap in its footer when the schedule has slipped. A second unconditional
+# email per hour saying "a thing ran" is what this project is supposed to replace.
 name: jobmon
 
 on:
   schedule:
-    # Avoid the top-of-hour Actions queue, which is routinely delayed under load.
-    - cron: "17 * * * *"
+    # THREE ATTEMPTS PER HOUR, NOT THREE SWEEPS PER HOUR.
+    #
+    # GitHub delivers `schedule` on a best-effort basis and silently DROPS ticks when the
+    # Actions queue is busy; a private repo on the free plan is exactly the case where that
+    # happens most. Measured on this repo: a nominally hourly cron produced run ids 23
+    # through 33 over 37 hours - ten sweeps where there should have been thirty-seven. The
+    # ids were contiguous and every run was green, so nothing crashed and nothing ever went
+    # red. The only symptom was mail that felt irregular.
+    #
+    # One cron entry gives that failure one chance to ruin the hour. Three spaced attempts
+    # give it three, and `--min-interval 50m` below makes the second and third attempts
+    # no-ops whenever the first one actually landed - so this costs a few seconds of runner
+    # time per skipped attempt and never a second digest.
+    #
+    # Offsets avoid :00, which is the most contended minute of the hour.
+    - cron: "7 * * * *"
+    - cron: "27 * * * *"
+    - cron: "47 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,9 +66,10 @@ on:
         type: boolean
         default: false
 
-# Keep only the newest scheduled run when a sweep overlaps the next hourly tick. Queuing
-# old sweeps can turn an hourly schedule into multi-hour delivery gaps; the ledger makes a
-# canceled run retryable on the next pass.
+# Keep only the newest run when a sweep overlaps the next tick. Queuing old sweeps can turn
+# an hourly schedule into multi-hour delivery gaps; the ledger makes a canceled run
+# retryable on the next pass. With three attempts an hour this also means a slow sweep is
+# superseded rather than raced.
 concurrency:
   group: monitor
   cancel-in-progress: true
@@ -52,13 +77,12 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # No default cap on a hosted runner is 6 hours (GitHub's own ceiling), and
-    # `cancel-in-progress: false` above means every later scheduled tick just queues up
-    # behind whatever is running - a genuinely stuck sweep would starve the monitor for
-    # most of a day before GitHub's own limit ever cut it off. 45 minutes is roughly 4x
-    # a real cold sweep (measured locally: ~10 min over 169 boards), so a normal run
-    # never gets near it.
-    timeout-minutes: 45
+    # Without a cap the hosted-runner ceiling is 6 hours, so a genuinely stuck sweep would
+    # starve the monitor for most of a day before GitHub cut it off. 20 minutes is well
+    # over 10x a real sweep - measured 2026-09-17, a full cold pass over the configured
+    # boards fetched 17,292 postings in 39 seconds, and the still-open recap adds ~18
+    # seconds of analysis - so a normal run never approaches it.
+    timeout-minutes: 20
     permissions:
       contents: write # to commit the ledger
     steps:
@@ -92,8 +116,14 @@ jobs:
           JOBMON_EMAIL_FROM: ${{ secrets.JOBMON_EMAIL_FROM }}
           JOBMON_EMAIL_TO: ${{ secrets.JOBMON_EMAIL_TO }}
           DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           args=(run --ledger state/postings.jsonl)
+          # Only for `schedule`. A human who clicks "Run workflow" means it, and should
+          # never be told "skipping, a run happened 12 minutes ago".
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            args+=(--min-interval 50m)
+          fi
           if [ "${DRY_RUN}" = "true" ]; then
             args+=(--dry-run)
           elif [ ! -f state/postings.jsonl ] && [ ! -f state/seen.jsonl ]; then
@@ -118,37 +148,6 @@ jobs:
             exit 0
           fi
           exit "${code}"
-
-      # Unconditional proof-of-life email. jobmon's own alerting (above) only fires on a
-      # genuinely new posting, so a quiet hour is silent by design - which is easy to
-      # mistake for a broken email pipeline. This step fires every time the Run step
-      # above succeeded or reported (exit 0 or handled exit 3), independent of whether any
-      # posting alert was sent, so you get an hourly signal that the sweep itself is alive.
-      # Skipped on dry runs (nothing "ran for real") and skipped if Run crashed (the
-      # "Report failure" step + GitHub's own failure email already cover that case).
-      - name: Heartbeat email
-        if: success() && !inputs.dry_run
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.JOBMON_SMTP_HOST }}
-          server_port: ${{ secrets.JOBMON_SMTP_PORT }}
-          username: ${{ secrets.JOBMON_SMTP_USER }}
-          password: ${{ secrets.JOBMON_SMTP_PASSWORD }}
-          from: ${{ secrets.JOBMON_EMAIL_FROM }}
-          to: ${{ secrets.JOBMON_EMAIL_TO }}
-          subject: "jobmon heartbeat - run #${{ github.run_number }}"
-          body: |
-            jobmon completed a sweep.
-
-            Run:     #${{ github.run_number }} (${{ github.run_id }})
-            Trigger: ${{ github.event_name }}
-            Time:    ${{ github.event.repository.updated_at || '' }} (see Actions log for exact UTC time)
-            Exit:    ${{ steps.run.outputs.code }}
-            Seeded:  ${{ steps.run.outputs.seeded == 'true' }}
-
-            This is an unconditional hourly heartbeat, separate from jobmon's own
-            posting alerts. Absence of this email means the run itself did not
-            complete successfully - check the Actions tab.
 
       # Ordering is the whole point: `jobmon run` notifies and writes the ledger BEFORE
       # this step exists. A commit that fails here costs one duplicate alert next run; a

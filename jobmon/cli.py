@@ -12,7 +12,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import audit, feedback, notify, profiles, runner, scoring, store
+from . import audit, feedback, ledger, notify, profiles, runner, scoring, store
 from .adapters import ats_public
 
 SINCE_UNITS = {"h": "hours", "d": "days", "w": "weeks"}
@@ -51,6 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
                          help="use the committed ledger at this path as the only durable "
                               "state, rebuilding the SQLite cache in a tmpdir (build "
                               "step 6). This is the mode the cron workflow runs.")
+    run_cmd.add_argument(
+        "--min-interval", default=None, metavar="DURATION",
+        help="skip the sweep entirely if the previous run finished less than this ago "
+             "(e.g. 50m, 2h). Lets the workflow fire several staggered cron attempts per "
+             "hour - GitHub drops scheduled runs under load - while still delivering at "
+             "most one digest per hour. Requires --ledger. Exits 0 when it skips.",
+    )
     run_cmd.add_argument("--profile", help="deliver for one profile only; default is "
                                            "every profile in config/profiles/")
 
@@ -127,6 +134,32 @@ def parse_since(value: str) -> datetime:
     return datetime.now(UTC) - timedelta(**{SINCE_UNITS[unit]: amount})
 
 
+DURATION_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+
+
+def parse_duration(value: str) -> timedelta:
+    """Parse "50m" / "2h" / "1d" into a timedelta."""
+    m = re.fullmatch(r"(\d+)\s*([mhd])", value.strip(), re.IGNORECASE)
+    if not m:
+        raise argparse.ArgumentTypeError(
+            f"cannot parse duration {value!r}; use e.g. 50m, 2h or 1d"
+        )
+    return timedelta(**{DURATION_UNITS[m.group(2).lower()]: int(m.group(1))})
+
+
+def _since_last_run(health: ledger.Health) -> timedelta | None:
+    """How long since the previous run finished, or None if that is not knowable."""
+    if not health.last_run_at:
+        return None
+    try:
+        before = datetime.fromisoformat(health.last_run_at)
+    except ValueError:
+        return None
+    if before.tzinfo is None:
+        before = before.replace(tzinfo=UTC)
+    return datetime.now(UTC) - before
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """`jobmon run`. Prints the RunResult summary and every adapter health line - this is
     what the GitHub Actions log shows, and the only place silent breakage becomes visible
@@ -159,6 +192,27 @@ def cmd_run(args: argparse.Namespace) -> int:
         # layer exists to prevent.
         print(f"profile config error: {exc}", file=sys.stderr)
         return EXIT_MISCONFIGURED
+    if args.min_interval is not None:
+        if args.ledger is None:
+            print("--min-interval requires --ledger (it reads the run stamp beside it)",
+                  file=sys.stderr)
+            return EXIT_MISCONFIGURED
+        try:
+            interval = parse_duration(args.min_interval)
+        except argparse.ArgumentTypeError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_MISCONFIGURED
+        health = ledger.load_health(args.ledger.parent / "health.json")
+        waited = _since_last_run(health)
+        if waited is not None and waited < interval:
+            # Exit 0, not a dedicated code. From the workflow's point of view a skipped
+            # attempt is a SUCCESS - the schedule is doing exactly what it was asked to -
+            # and anything non-zero here would turn two of every three runs red and bury
+            # the red run that means something.
+            mins = int(waited.total_seconds() // 60)
+            print(f"skipping: run #{health.last_run_id} finished {mins}m ago, "
+                  f"less than --min-interval {args.min_interval}")
+            return EXIT_OK
     if args.ledger is not None:
         result = runner.run_scheduled(
             ledger_path=args.ledger,
@@ -442,6 +496,11 @@ def cmd_profiles(args: argparse.Namespace) -> int:
         print(f"  limits       min_score={lim.min_score} instant/day="
               f"{lim.max_instant_per_day} digest={lim.max_digest_items} "
               f"company/day={lim.max_per_company_per_day}")
+        recap = (f"last {lim.recap_days}d, up to {lim.max_recap_items}"
+                 if lim.recap_days else "off")
+        print(f"  locations    allow={', '.join(profile.locations.allow) or 'anywhere'} | "
+              f"on_mismatch={profile.locations.on_mismatch}")
+        print(f"  recap        still-open section: {recap}")
         print(f"  denylist     {len(profile.denylist.companies)} companies, "
               f"{len(profile.denylist.title_terms)} title terms, "
               f"{len(profile.denylist.postings)} muted postings")

@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .models import AdapterHealth, Analysis, ApplicationStatus, Posting
-from .normalize import normalize_company, normalize_title
+from .normalize import ats_job_token, normalize_company, normalize_title
 
 DB_PATH = Path("jobmon.db")
 
@@ -55,10 +55,13 @@ CREATE TABLE IF NOT EXISTS postings (
     raw_json            TEXT NOT NULL,
     locale              TEXT NOT NULL DEFAULT 'US',
     reposted_count      INTEGER NOT NULL DEFAULT 0,
-    last_seen_run       INTEGER
+    last_seen_run       INTEGER,
+    ats_token           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_postings_fuzzy
     ON postings (normalized_company, normalized_title, first_location);
+CREATE INDEX IF NOT EXISTS idx_postings_ats_token
+    ON postings (normalized_company, ats_token);
 CREATE INDEX IF NOT EXISTS idx_postings_first_seen ON postings (first_seen_at);
 
 -- Addendum 2, build step 1. "We have this posting" and "we alerted about it" are two
@@ -213,45 +216,136 @@ def upsert_posting(
             """UPDATE postings SET last_seen_at = ?, description_html = ?,
                    description_text = ?, title = ?, normalized_title = ?, apply_url = ?,
                    locations_json = ?, first_location = ?, raw_json = ?,
-                   reposted_count = ?, last_seen_run = ?
+                   reposted_count = ?, last_seen_run = ?, ats_token = ?
                WHERE global_id = ?""",
             (
                 _iso(posting.last_seen_at), posting.description_html,
                 posting.description_text, posting.title, norm_title, posting.apply_url,
                 json.dumps(posting.locations), first_location, json.dumps(posting.raw),
-                reposted, run_id, posting.global_id,
+                reposted, run_id, ats_job_token(posting.apply_url), posting.global_id,
             ),
         )
         conn.commit()
         return outcome
 
-    matched = find_fuzzy_duplicate(conn, posting)
+    # Exact ATS req id first, fuzzy (company, title, location) only as a fallback. The id
+    # is an identity, not a resemblance, so it is allowed to override a title that differs.
+    token = ats_job_token(posting.apply_url)
+    matched = find_ats_duplicate(conn, posting, token)
+    matched_on = "company+ats_job_id"
+    if matched is None:
+        matched = find_fuzzy_duplicate(conn, posting)
+        matched_on = "company+title+location"
     conn.execute(
         """INSERT INTO postings (
                global_id, source, company, normalized_company, title, normalized_title,
                first_location, locations_json, remote_type, description_html,
                description_text, apply_url, posted_at, first_seen_at, last_seen_at,
-               raw_json, locale, reposted_count, last_seen_run)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)""",
+               raw_json, locale, reposted_count, last_seen_run, ats_token)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
         (
             posting.global_id, posting.source, posting.company, norm_company,
             posting.title, norm_title, first_location, json.dumps(posting.locations),
             posting.remote_type, posting.description_html, posting.description_text,
             posting.apply_url, _iso(posting.posted_at), _iso(posting.first_seen_at),
             _iso(posting.last_seen_at), json.dumps(posting.raw), posting.locale, run_id,
+            token,
         ),
     )
     if matched:
         conn.execute(
             """INSERT OR IGNORE INTO duplicates (global_id, matched_global_id, matched_on,
                                                  seen_at) VALUES (?,?,?,?)""",
-            (posting.global_id, matched, "company+title+location",
-             _iso(posting.first_seen_at)),
+            (posting.global_id, matched, matched_on, _iso(posting.first_seen_at)),
         )
         conn.commit()
         return "duplicate"
     conn.commit()
     return "new"
+
+
+def dedup_by_ats_token(conn: sqlite3.Connection, run_id: int) -> int:
+    """Reconcile same-req duplicates across everything THIS run saw. Returns rows written.
+
+    `upsert_posting` can only dedup a posting on the run that first inserts it - after that
+    it takes the "seen before" branch and never consults a finder again. So the exact-id
+    rule added on 2026-09-17 would have applied only to postings discovered from that day
+    on, and the 17,000 already in the ledger would have kept arriving in triplicate forever.
+    This pass closes that gap, and it is not a one-off migration: a req routinely appears on
+    an ATS board first and in a curated GitHub list days later, so the two copies are
+    inserted on different runs and only a sweep-wide pass can ever see them together.
+
+    CANONICAL IS THE OLDEST `first_seen_at`, tie-broken by `global_id`. Stability is the
+    whole requirement: if the winner could change between runs, the previous winner would
+    become a duplicate, the new one would look undelivered, and the pair would re-alert
+    every time the order shifted. Oldest-wins also keeps the copy you were alerted about.
+
+    Idempotent - `INSERT OR IGNORE` against the existing `duplicates` rows.
+    """
+    rows = conn.execute(
+        """SELECT global_id, normalized_company, ats_token, first_seen_at
+           FROM postings
+           WHERE last_seen_run = ? AND ats_token IS NOT NULL AND ats_token != ''
+           ORDER BY normalized_company, ats_token, first_seen_at, global_id""",
+        (run_id,),
+    ).fetchall()
+    groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
+    for row in rows:
+        groups.setdefault((row["normalized_company"], row["ats_token"]), []).append(row)
+
+    written = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        canonical = group[0]["global_id"]          # ORDER BY already put the oldest first
+        members = [row["global_id"] for row in group]
+        # The canonical row must not itself be recorded as a duplicate of a group member.
+        # `upsert_posting` can only match against rows that already exist, so when the
+        # OLDER copy happens to be inserted second it marks itself the duplicate of the
+        # newer one - the opposite of the oldest-wins rule this pass enforces. Left alone,
+        # both directions end up in the table, both rows are then excluded from
+        # `unalerted_postings` AND the recap, and the job disappears from the mail
+        # entirely. Deleting first makes this pass the single authority on the group.
+        placeholders = ",".join("?" * len(members))
+        conn.execute(
+            f"""DELETE FROM duplicates
+                WHERE global_id = ? AND matched_global_id IN ({placeholders})""",
+            (canonical, *members),
+        )
+        for row in group[1:]:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO duplicates
+                       (global_id, matched_global_id, matched_on, seen_at)
+                   VALUES (?,?,?,?)""",
+                (row["global_id"], canonical, "company+ats_job_id", row["first_seen_at"]),
+            )
+            written += cursor.rowcount or 0
+    conn.commit()
+    return written
+
+
+def find_ats_duplicate(
+    conn: sqlite3.Connection, posting: Posting, token: str | None
+) -> str | None:
+    """Primary dedup lookup: same employer, same ATS req id. Exact, not fuzzy.
+
+    A `None` token means the URL carried no id, which is "no opinion" - the caller falls
+    back to `find_fuzzy_duplicate`. It must never match another row whose token is also
+    NULL, which is why the guard below returns early instead of letting SQL compare NULLs.
+
+    No time window, unlike the fuzzy key: a req id is stable for the life of the posting,
+    so there is no interval after which the same id under the same employer stops meaning
+    the same job.
+    """
+    if not token:
+        return None
+    row = conn.execute(
+        """SELECT global_id FROM postings
+           WHERE normalized_company = ? AND ats_token = ? AND global_id != ?
+           ORDER BY first_seen_at LIMIT 1""",
+        (normalize_company(posting.company), token, posting.global_id),
+    ).fetchone()
+    return row["global_id"] if row else None
 
 
 def find_fuzzy_duplicate(
@@ -331,6 +425,36 @@ def unalerted_postings(
                              WHERE a.global_id = p.global_id AND a.profile = ?)
            ORDER BY p.first_seen_at""",
         (run_id, profile),
+    ).fetchall()
+    return [_row_to_posting(r) for r in rows]
+
+
+def still_open_postings(
+    conn: sqlite3.Connection, run_id: int, since: datetime
+) -> list[Posting]:
+    """Postings first seen since `since` that THIS run's sweep saw again.
+
+    The recap section's candidate pool (`limits.recap_days`). Two conditions, and both
+    carry weight:
+
+    `last_seen_run = ?` is what makes the word "open" honest. Every adapter re-lists its
+    whole board every sweep, so a posting the employer has taken down simply stops coming
+    back - it keeps its row and its old `last_seen_run` forever. Selecting on the current
+    run is therefore the only closed-req filter this project has, and without it the recap
+    would accumulate dead links indefinitely, which is precisely the failure that makes a
+    standing list stop being worth opening.
+
+    `first_seen_at >= ?` bounds the work. This is deliberately NOT a proxy for "recent
+    enough to still be live" - that is `last_seen_run`'s job - it is a cost ceiling on how
+    many postings the caller has to analyze. Unlike `unalerted_postings` this ignores the
+    alerts table entirely: a recap item is expected to recur run after run until it closes.
+    """
+    rows = conn.execute(
+        """SELECT p.* FROM postings p
+           LEFT JOIN duplicates d ON d.global_id = p.global_id
+           WHERE p.last_seen_run = ? AND d.global_id IS NULL AND p.first_seen_at >= ?
+           ORDER BY p.first_seen_at DESC""",
+        (run_id, _iso(since)),
     ).fetchall()
     return [_row_to_posting(r) for r in rows]
 

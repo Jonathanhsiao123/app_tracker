@@ -134,6 +134,19 @@ class Locations:
     allow: list[str] = field(default_factory=list)   # empty = everywhere allowed
     prefer: list[str] = field(default_factory=list)
     deny: list[str] = field(default_factory=list)
+    # What happens to a posting matching NEITHER `allow` nor `prefer`, when `allow` is
+    # non-empty. `suppress` is the default because that is what the word "allow" says.
+    #
+    # It did not used to do anything of the kind. `allow` fed the score term and nothing
+    # else - `location_match` returned 0.0 and the posting was alerted anyway, a little
+    # lower down - so a profile reading `allow: [remote, "United States"]` was quietly
+    # offered jobs in Sydney, Amsterdam and Tampere. Measured on the 2026-09-17 sweep,
+    # 105 of the 183 alertable postings in the recap pool (57%) matched neither list.
+    #
+    # `digest` keeps the old lenient behaviour behind a name that admits to it; `alert`
+    # restores it completely. An empty `allow` no-ops regardless - a profile that has not
+    # thought about location must not have every posting suppressed out from under it.
+    on_mismatch: str = "suppress"
 
 
 @dataclass(slots=True)
@@ -148,6 +161,24 @@ class Limits:
     max_per_company_per_day: int | None = None
     suppress_if_applied: bool = True
     suppress_reposts: bool = True
+    # --- the still-open recap ----------------------------------------------------------
+    # An hourly sweep finds only the postings that appeared in the last hour - on a
+    # measured day that is ~40 qualifying postings spread over 24 runs, so a correctly
+    # tuned hourly digest still arrives holding one or two items, and a quiet hour arrives
+    # holding the sentence "no new eligible openings were found". That is accurate and
+    # useless: the reason to open the mail is to see what is open, not what changed in the
+    # last sixty minutes.
+    #
+    # So the digest carries a second section - the highest-scoring postings first seen in
+    # the last `recap_days` that are STILL open in this run's sweep and not yet applied to.
+    # Recap items are never `mark_alerted`ed: they are a standing view, so the same posting
+    # recurs until it closes or you apply, and the NEW section stays a true diff.
+    #
+    # OFF BY DEFAULT, like every other cap in this block. The built-in default profile is
+    # the pre-addendum behaviour by contract, so the recap is something a profile opts into
+    # by setting `recap_days`, not something that appears in everyone's mail on upgrade.
+    recap_days: int = 0
+    max_recap_items: int | None = 25
 
 
 @dataclass(slots=True)
@@ -348,24 +379,37 @@ def _parse_roles(raw: dict[str, Any], where: str) -> Roles:
 
 
 def _parse_locations(raw: dict[str, Any], where: str) -> Locations:
-    _reject_unknown(raw, ("allow", "prefer", "deny"), where)
-    return Locations(
+    _reject_unknown(raw, ("allow", "prefer", "deny", "on_mismatch"), where)
+    out = Locations(
         allow=_str_list(raw.get("allow"), f"{where}.allow"),
         prefer=_str_list(raw.get("prefer"), f"{where}.prefer"),
         deny=_str_list(raw.get("deny"), f"{where}.deny"),
     )
+    if "on_mismatch" in raw:
+        out.on_mismatch = _enum(raw["on_mismatch"], DISPOSITIONS, f"{where}.on_mismatch")
+    return out
 
 
 def _parse_limits(raw: dict[str, Any], where: str) -> Limits:
     known = ("min_score", "max_instant_per_day", "max_digest_items",
-             "max_per_company_per_day", "suppress_if_applied", "suppress_reposts")
+             "max_per_company_per_day", "suppress_if_applied", "suppress_reposts",
+             "recap_days", "max_recap_items")
     _reject_unknown(raw, known, where)
     out = Limits()
     if "min_score" in raw:
         out.min_score = _number(raw["min_score"], f"{where}.min_score")
-    for key in ("max_instant_per_day", "max_digest_items", "max_per_company_per_day"):
+    for key in ("max_instant_per_day", "max_digest_items", "max_per_company_per_day",
+                "max_recap_items"):
         if key in raw:
             setattr(out, key, _positive_int_or_none(raw[key], f"{where}.{key}"))
+    if "recap_days" in raw:
+        # 0 is meaningful here (it disables the section), so this is NOT
+        # `_positive_int_or_none` - that helper rejects 0 and maps None to "uncapped",
+        # which would read as "recap everything ever seen".
+        value = raw["recap_days"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ProfileError(f"{where}.recap_days must be an integer >= 0, got {value!r}")
+        out.recap_days = value
     for key in ("suppress_if_applied", "suppress_reposts"):
         if key in raw:
             setattr(out, key, _bool(raw[key], f"{where}.{key}"))

@@ -136,7 +136,6 @@ ats:
   - {company: "Stoke Space", ats: greenhouse, slug: "stokespacetechnologies", tier: false}
   - {company: "StubHub", ats: greenhouse, slug: "stubhubinc", tier: false}
   - {company: "Syska Hennessy Group", ats: greenhouse, slug: "syskahennessy", tier: false}
-  - {company: "National Information Solutions Cooperative", ats: greenhouse, slug: "testnisc", tier: false}
   - {company: "The Nuclear Company", ats: greenhouse, slug: "thenuclearcompany", tier: false}
   - {company: "Twitch", ats: greenhouse, slug: "twitch", tier: true}
   - {company: "Varda", ats: greenhouse, slug: "vardaspace", tier: false}

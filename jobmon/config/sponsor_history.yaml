@@ -53,3 +53,157 @@
 #   note: "new grad SWE reqs sponsor; defense subsidiary does not"
 #
 # Empty until the builder has been run. Every code path below works with an empty file.
+
+# --- SEEDED BY HAND, 2026-09-17 -------------------------------------------------------
+#
+# These entries were NOT produced by scripts/build_sponsor_history.py. They are transcribed
+# from the per-company research already recorded in `sponsorship_overrides.yaml`, which was
+# compiled from the same public DOL LCA disclosure data the script reads, and each entry
+# keeps the count and the wording of the finding it came from.
+#
+# WHY SEED BY HAND AT ALL. An empty history means every employer is `unknown`, and until
+# 2026-09-17 that was not a neutral state: `min_sponsor_confidence: occasional` charged a
+# flat 0.10 penalty against all 321 candidates in a measured sweep, and `unknown` also took
+# only half the eligibility score term. `scoring.score` no longer double-charges `unknown`,
+# so an empty file is now genuinely neutral - but neutral is not the same as informative,
+# and these 17 employers are the ones actually on the board list.
+#
+# THIS IS A SEED, NOT THE REAL THING. It covers 17 of 172 configured companies. Everything
+# else stays `unknown`, which is correct: no DOL match is a fuzzy-name miss or a small
+# employer, never evidence of refusal. Run the builder against the bulk quarterly files for
+# real coverage - it will overwrite this whole file, which is the intent:
+#
+#   python scripts/build_sponsor_history.py --input <dir of DOL LCA CSVs>
+#
+# `h1b_filings_recent` is the figure named in the source note. Where a note gave both a
+# multi-year total and a recent-year count, the RECENT count is used, because the tiers are
+# meant to describe current behaviour - a company that filed 600 petitions through 2019 and
+# none since is not `frequent` today. `source` records which reading each number is.
+
+cloudflare:
+  confidence: frequent
+  h1b_filings_recent: 103
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "103 LCAs in 2025, 664 on record."
+
+linkedin:
+  confidence: frequent
+  h1b_filings_recent: 904
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "904 LCAs in FY2025, 7761 on record. Microsoft subsidiary."
+
+servicenow:
+  confidence: frequent
+  h1b_filings_recent: 825
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "825 LCAs in 2025, 4175 on record."
+
+verkada:
+  confidence: frequent
+  h1b_filings_recent: 304
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "304 LCAs FY2022-2024, still filing into FY2025."
+
+scale ai:
+  confidence: frequent
+  h1b_filings_recent: 80
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "~80 LCAs in FY2025, ~205 total. Filing entity Scale AI Inc."
+
+palantir:
+  confidence: frequent
+  h1b_filings_recent: 114
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "114 LCAs in FY2025 for SWE/FDE/ML roles. Clearance-gated government reqs are
+    excluded by `suppress_clearance`, not by this entry - the company sponsors."
+
+woven:
+  confidence: frequent
+  h1b_filings_recent: 71
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "71 LCAs FY2025 and 25 FY2026. Filing entity Woven By Toyota US Inc."
+
+twitch:
+  confidence: frequent
+  h1b_filings_recent: 61
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "61 LCAs in FY2025, 552 on record. Amazon subsidiary."
+
+figma:
+  confidence: frequent
+  h1b_filings_recent: 59
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "59 LCAs in FY2025, 177 on record, including software engineer roles."
+
+skydio:
+  confidence: occasional
+  h1b_filings_recent: 35
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "35 LCAs in FY2025 for engineering/software roles."
+
+sentry:
+  confidence: occasional
+  h1b_filings_recent: 23
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "23 LCAs and 3 PERM cases FY2022-2024. Filing entity Functional Software Inc."
+
+harvey:
+  confidence: occasional
+  h1b_filings_recent: 20
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "9 LCAs FY2022-2024 plus 11 in H1 FY2025. Filing entity Counsel AI Corporation."
+
+notion:
+  confidence: occasional
+  h1b_filings_recent: 13
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "13 LCAs in FY2026. Filing entity Notion Labs Inc."
+
+anyscale:
+  confidence: occasional
+  h1b_filings_recent: 13
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "~13 LCAs in FY2025."
+
+gecko-robotics:
+  confidence: occasional
+  h1b_filings_recent: 10
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "10 LCAs FY2022-2024, still filing into FY2025 (2 I-129 approvals)."
+
+ramp:
+  confidence: occasional
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "Established multi-year LCA filing history; the source note gave no count, so
+    `h1b_filings_recent` is deliberately absent rather than invented. Filing entity Ramp
+    Business Corporation."
+
+replit:
+  confidence: occasional
+  source: dol_lca_disclosure
+  checked_on: 2026-09-12
+  note: "Certified LCAs on record including software engineer roles; the source note gave
+    no count, so `h1b_filings_recent` is deliberately absent rather than invented."
+
+# Researched and deliberately left out, so they stay `unknown` (see sponsorship_overrides):
+#   elevenlabs - one LCA under a likely entity name; too thin to bucket.
+#   lambda     - filing entity not separable from unrelated "Lambda ..." staffing firms.
+#   zapier     - no filings found; their mobility post is suggestive but not a refusal.
+# `unknown` is the honest label for all three. It is not `none_observed`, which claims a
+# search came back empty for an employer we successfully identified.

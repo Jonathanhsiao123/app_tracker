@@ -119,7 +119,8 @@ def run_scheduled(
 
             run_id = ledger.next_run_id(state.entries, previous_health)
             result = run(
-                conn, dry_run=dry_run, seed=seed, run_id=run_id, profile_list=profile_list
+                conn, dry_run=dry_run, seed=seed, run_id=run_id,
+                profile_list=profile_list, run_gap=describe_run_gap(previous_health),
             )
 
             # Postings carried over from the ledger that were never delivered: either a
@@ -133,11 +134,49 @@ def run_scheduled(
                 # Only now, after delivery, is the durable state allowed to move.
                 ledger.save_state(ledger.state_from_db(conn), state_dir)
                 ledger.save_health(
-                    ledger.Health(counts=current, last_run_id=run_id), health_path
+                    ledger.Health(
+                        counts=current,
+                        last_run_id=run_id,
+                        last_run_at=datetime.now(UTC).isoformat(),
+                    ),
+                    health_path,
                 )
         finally:
             conn.close()
     return result
+
+
+# A sweep is nominally hourly. Past this, say so in the digest rather than leaving the
+# reader to notice that mail feels sparse - see `ledger.Health.last_run_at`.
+EXPECTED_RUN_GAP = timedelta(minutes=75)
+
+
+def describe_run_gap(previous: ledger.Health | None) -> str | None:
+    """One line for the digest footer: how long since the previous completed run.
+
+    Returns None when there is nothing useful to say - no previous run, an unparseable
+    stamp, or a gap inside `EXPECTED_RUN_GAP`. A footer that appears only when the schedule
+    actually slipped is one worth reading; an unconditional "last run 58 minutes ago" is
+    just another line to skim past.
+    """
+    if previous is None or not previous.last_run_at:
+        return None
+    try:
+        before = datetime.fromisoformat(previous.last_run_at)
+    except ValueError:
+        return None
+    if before.tzinfo is None:
+        before = before.replace(tzinfo=UTC)
+    gap = datetime.now(UTC) - before
+    if gap < EXPECTED_RUN_GAP:
+        return None
+    hours, minutes = divmod(int(gap.total_seconds() // 60), 60)
+    spelled = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+    return (
+        f"Previous sweep was {spelled} ago (run #{previous.last_run_id}), longer than the "
+        f"~1h schedule. GitHub drops scheduled runs under load; postings are not lost - "
+        f"the next sweep still sees everything still open."
+    )
 
 
 def enabled_adapters() -> list[object]:
@@ -156,6 +195,7 @@ def run(
     adapter: str | None = None,
     run_id: int | None = None,
     profile_list: list[Profile] | None = None,
+    run_gap: str | None = None,
 ) -> RunResult:
     """Execute one full pass.
 
@@ -258,6 +298,15 @@ def run(
             store.record_health(conn, health)
             result.health.append(health)
 
+        # Reconcile cross-source duplicates across everything this sweep saw, BEFORE the
+        # profile loop reads `unalerted_postings` - both that query and the recap exclude
+        # rows in `duplicates`, so a copy marked here is silently dropped from the mail
+        # rather than arriving beside the req it duplicates.
+        merged = store.dedup_by_ats_token(conn, run_id)
+        if merged:
+            log.info("dedup: %d same-req copies folded into their canonical posting", merged)
+            result.duplicates += merged
+
         # One ANALYSIS pass, then one loop per profile. Analysis is objective and is
         # shared; the profile loop below never touches a posting or analysis record
         # (addendum 2). Adding a second user therefore costs zero extra fetching and zero
@@ -274,7 +323,8 @@ def run(
                 if (posting.posted_at or posting.first_seen_at) >= cutoff
             ]
             outcome = _deliver_profile(
-                client, conn, profile, pending, cfg, tier, dry_run=dry_run, seed=seed
+                client, conn, profile, pending, cfg, tier, dry_run=dry_run, seed=seed,
+                run_id=run_id, run_gap=run_gap,
             )
             result.profiles[profile.name] = outcome
             result.alerted += outcome.alerted
@@ -300,6 +350,9 @@ class ProfileResult:
     seeded: int = 0
     truncated_digest: int = 0
     held_by_company: int = 0
+    recap: int = 0            # still-open items carried in the digest's second section
+    recap_pool: int = 0       # how many qualified before `max_recap_items` cut it
+    recap_truncated: int = 0
     alerted_ids: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -307,7 +360,8 @@ class ProfileResult:
             f"[{self.profile}] considered={self.considered} instant={self.instant} "
             f"digest={self.digest} silent={self.silent} alerted={self.alerted} "
             f"blocked={self.blocked} truncated={self.truncated_digest} "
-            f"company_held={self.held_by_company}"
+            f"company_held={self.held_by_company} "
+            f"recap={self.recap}/{self.recap_pool}"
         )
 
 
@@ -320,6 +374,8 @@ def _deliver_profile(
     tier: set[str],
     dry_run: bool = False,
     seed: bool = False,
+    run_id: int = 0,
+    run_gap: str | None = None,
 ) -> ProfileResult:
     """Score, route, cap, sort and send one profile's share of this run.
 
@@ -364,6 +420,17 @@ def _deliver_profile(
 
     ordered_instant = scoring.sort_candidates(capped.instant, profile)
     ordered_digest = scoring.sort_candidates(capped.digest, profile)
+    recap = _build_recap(
+        conn, profile, cfg, tier, applied, reposts, run_id,
+        exclude={c.global_id for c in (*ordered_instant, *ordered_digest)},
+        skip=seed,
+    )
+    out.recap_pool = len(recap)
+    cap = profile.limits.max_recap_items
+    if cap is not None and len(recap) > cap:
+        out.recap_truncated = len(recap) - cap
+        recap = recap[:cap]
+    out.recap = len(recap)
 
     if seed:
         # Store everything as already-alerted so the next run only reports genuine
@@ -384,6 +451,10 @@ def _deliver_profile(
             print(notify.format_alert(
                 candidate.posting, candidate.analysis, profile, candidate.score
             ))
+        for candidate in recap:
+            print(f"--- [{profile.name}] recap "
+                  f"score={candidate.score:.2f} group={candidate.group} "
+                  f"{candidate.posting.company} - {candidate.posting.title}")
         return out
 
     now = datetime.now(UTC)
@@ -394,7 +465,8 @@ def _deliver_profile(
                                scores={candidate.global_id: candidate.score})
             out.alerted_ids.append(candidate.global_id)
     if notify.send_profile_digest(
-        client, ordered_digest, profile, capped.truncated_digest, capped.held_by_company
+        client, ordered_digest, profile, capped.truncated_digest, capped.held_by_company,
+        recap=recap, recap_pool=out.recap_pool, run_gap=run_gap,
     ):
         # `mark_alerted` runs only for what was actually delivered. A failed send leaves
         # no alert row, so the posting is retried next run rather than lost - one
@@ -405,6 +477,53 @@ def _deliver_profile(
         out.alerted_ids.extend(ids)
     out.alerted = len(out.alerted_ids)
     return out
+
+
+def _build_recap(
+    conn: sqlite3.Connection,
+    profile: Profile,
+    cfg,
+    tier: set[str],
+    applied: set[str],
+    reposts: set[str],
+    run_id: int,
+    exclude: set[str],
+    skip: bool = False,
+) -> list[scoring.Candidate]:
+    """The digest's second section: what is still open, not just what is new.
+
+    `--seed` skips this - seeding sends nothing at all - and `recap_days: 0` disables it.
+
+    WHY THIS IS NOT JUST A BIGGER `RECENT_OPENING_WINDOW`. Widening that window would put
+    old postings into the NEW section and `mark_alerted` them, which destroys the one
+    property the alerts table has: that it records what you were actually told about, once.
+    The recap is a separate list with separate semantics - it is recomputed from scratch
+    every run, it is never marked, and an item stays in it until the employer takes the
+    posting down or you `jobmon apply`. Repetition is the feature; a standing list that
+    silently dropped things would be worse than no standing list.
+
+    Filtered by the same policy ceiling AND the same `min_score` as the digest, so this can
+    never become a side door: nothing suppressed by eligibility, role class, `never` or a
+    denylist appears here, and neither does a tier-1 req that only reaches `instant` by the
+    tier bypass rather than on its score. A standing list is read by scanning, so its
+    ranking has to be real.
+    """
+    if skip or profile.limits.recap_days <= 0:
+        return []
+    since = datetime.now(UTC) - timedelta(days=profile.limits.recap_days)
+    out: list[scoring.Candidate] = []
+    for posting in store.still_open_postings(conn, run_id, since):
+        if posting.global_id in exclude or posting.global_id in applied:
+            continue
+        if posting.global_id in reposts or posting.raw.get("closed"):
+            continue
+        analysis = _analyze(conn, posting, cfg)
+        candidate = scoring.route(posting, analysis, profile, tier, applied)
+        if candidate.route in ("digest", "instant") and (
+            candidate.score >= profile.limits.min_score
+        ):
+            out.append(candidate)
+    return scoring.sort_candidates(out, profile)
 
 
 def _analyze(conn: sqlite3.Connection, posting: Posting, cfg) -> Analysis:

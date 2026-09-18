@@ -4,7 +4,7 @@ Job posting monitor for the 2027 New Grad / Summer 2027 Internship cycle (US mar
 See `job-monitor-spec.md` for the authoritative spec and
 `profiles-and-eligibility-addendum.md` for the profiles, scoring and alert-policy layer.
 
-**Status (2026-09-15): Phases 1–3 ship, and the addendum ships.** Fetch, normalize, dedup,
+**Status (2026-09-17): Phases 1–3 ship, and the addendum ships.** Fetch, normalize, dedup,
 role filter, eligibility classification, keyword/variant analysis, apply/log/funnel/health
 tracking, and the curated-repo adapter (`adapters/github_repos.py`, covering
 SimplifyJobs/vanshb03/speedyapply) are all implemented and tested. So are the addendum's
@@ -13,7 +13,23 @@ policy and caps, scoring and routing, sponsorship confidence, and `mute`/`tune` 
 Phase X category priorities. Only `adapters/bigtech/` is still a stub (spec 12); the
 curated repos are the primary big-tech source regardless (spec 5b).
 
-    [source adapters] -> [normalizer] -> [dedup store] -> ANALYZE (objective) -> [profile A] -> alerts
+**2026-09-17 — alert volume repair.** The tuning had overshot: a measured sweep showed
+`min_score: 0.55` admitting **0 of 321** daily candidates, so the hourly mail was empty and
+the few postings that did qualify went to the phone only. Four fixes, each measured before
+and after — see `tests/test_recap_and_cadence.py`:
+
+| Defect | Before | After |
+|---|---|---|
+| `unknown` sponsor confidence penalized twice | 321/321 postings docked 0.175 | `unknown` exempt; penalty only on observed-low |
+| digest listed only what was new this hour | ~1–2 items, often 0 | plus a **still-open** section from the last 3 days |
+| `locations.allow` was a scoring hint, not a filter | 57% of items outside the US | suppressed by default (`on_mismatch`) |
+| same req from 3 sources under 3 titles | 14% redundant copies | exact ATS-req-id dedup, 0% |
+
+The hourly schedule was also only landing a run every ~5 hours — GitHub drops `schedule`
+events under load — so the workflow now makes three staggered attempts an hour and
+`--min-interval` keeps that to one digest.
+
+    [source adapters] -> [normalizer] -> [dedup store] -> ANALYZE (objective) -> [profile A] -> alerts  (new + still-open)
                                                                               -> [profile B] -> alerts
 
 Single Python process, run on an hourly schedule (GitHub Actions cron). No services,
@@ -82,10 +98,9 @@ competing with the alerts this project exists to send.
 
 ### Email delivery
 
-Every hourly batch can also be delivered by SMTP. Even an empty scan sends a heartbeat
-email so you can tell that the hourly workflow ran. Push delivery remains enabled;
-when SMTP is configured, both channels must succeed before a posting is marked alerted.
-Set these GitHub Actions secrets to enable it:
+Every sweep delivers one digest by SMTP. Push delivery remains enabled; when SMTP is
+configured, both channels must succeed before a posting is marked alerted. Set these
+GitHub Actions secrets to enable it:
 
 `JOBMON_SMTP_HOST`, `JOBMON_SMTP_PORT` (usually `587`, or `465` for implicit TLS),
 `JOBMON_SMTP_USER`, `JOBMON_SMTP_PASSWORD`, `JOBMON_EMAIL_FROM`, and `JOBMON_EMAIL_TO`.
@@ -96,10 +111,38 @@ environment variables in the shell before `jobmon run`.
 
 ## How much reaches your phone
 
-Each hourly run sends one batch containing eligible openings released within the last 24
-hours, ordered newest first. When there are no new openings, it sends a short heartbeat
-instead. The email subject is `Jobmon Opening Workflow`; its HTML view groups openings by
-function and embeds the application URL in the job title.
+Each sweep sends one digest, subject `Jobmon Opening Workflow`, in two sections:
+
+**NEW THIS SWEEP** — postings found this run that you have never been shown, in full
+detail: visa badge, evidence sentence, keywords, gaps, recommended resume variant.
+
+**STILL OPEN** — the highest-scoring postings from the last `limits.recap_days` that are
+still live and that you have not applied to, one compact line each, grouped by category in
+your `priorities.order`.
+
+The second section exists because an hourly sweep finds roughly **one or two** genuinely
+new qualifying postings — about 40 a day. A digest carrying only those is mostly empty, and
+on a quiet hour it used to be a single sentence saying so. Recap items are **never marked
+alerted**: they recur every sweep until the employer takes the posting down or you run
+`jobmon apply`, which is what makes it a standing list rather than a second chance to miss
+something. Set `recap_days: 0` to turn the section off.
+
+A digest with nothing in either section still sends, so the mail is itself the proof that
+the sweep ran — there is no separate heartbeat. When the schedule has slipped, the footer
+says by how much.
+
+### Why three cron entries
+
+The workflow fires at `:07`, `:27` and `:47`. GitHub delivers `schedule` events on a
+best-effort basis and **drops** them under load: measured on this repo, a nominally hourly
+cron produced run ids 23 through 33 over 37 hours — ten sweeps where there should have been
+thirty-seven, with contiguous ids and no red runs, so nothing had crashed. One cron entry
+gives that failure one chance to lose the hour; three give it three.
+
+`jobmon run --min-interval 50m` is what stops three attempts becoming three digests: an
+attempt that finds a completed run less than 50 minutes old prints one line and exits 0
+without sweeping. It is passed only for `schedule`, so clicking **Run workflow** always
+runs.
 
 ## Commands
 
@@ -186,6 +229,16 @@ have, with no fetch and no re-analysis:
 routinely scrolling past the first group, switch to `score` and let `order` act as a
 tiebreaker. The scrolling is the signal — do not try to fix it by re-ranking.
 
+### locations.allow is an allow-list
+
+`allow` suppresses postings matching neither `allow` nor `prefer`, which is what the word
+means. It used to feed the score term and nothing else, so a profile reading
+`allow: [remote, "United States"]` was quietly offered jobs in Sydney, Amsterdam and
+Tampere — 57% of alertable postings on the measured sweep. Set
+`locations.on_mismatch: digest` (or `alert`) to get the old lenient behaviour back under a
+name that admits to it. An empty `allow` no-ops, so a profile that has not thought about
+location is unaffected.
+
 ## Scoring and routing
 
     score = w_function    * function_match      (rank-derived, from priorities.order)
@@ -202,6 +255,20 @@ alert, score ≥ `min_score` proposes the digest, and anything the eligibility/r
 caps at `digest` stays in the digest however well it scores. Then the caps in `limits`
 apply, highest score first.
 
+`unknown` sponsor confidence is **not** charged `penalty_below_min_sponsor`. It already
+scores 0.5, mid-scale, and no DOL match means a fuzzy-name miss or a small employer rather
+than evidence of refusal — charging both scored the same missing fact twice. That mattered
+more than it sounds: with `sponsor_history.yaml` unpopulated every employer is `unknown`,
+so the penalty applied to **321 of 321** candidates on a measured sweep. A penalty that
+fires on everything ranks nothing; it is just `min_score + 0.10` with the signal removed.
+Together with the halved eligibility term it docked 0.175 from every posting, and
+`min_score: 0.55` admitted **none of them**.
+
+**Set `min_score` from `jobmon audit`, never from intuition.** The measured yield for the
+shipped profile was 13 items/day at 0.55, 33 at 0.40 and 43 at 0.30. The caps, not the
+threshold, are what bound your inbox — so a loose threshold with tight caps hands you the
+best 25, while a tight one hands you an empty inbox and no ranking at all.
+
 The caps are the hard guarantee: **even if every threshold is miscalibrated, you cannot
 receive more than `max_instant_per_day` plus two digests.** Everything they cut is still
 stored, and the digest says how much was held back.
@@ -215,8 +282,15 @@ override. Company filing history is stronger, and public.
     python scripts/build_sponsor_history.py --input <dir of DOL LCA CSVs>
 
 builds `jobmon/config/sponsor_history.yaml` from the DOL disclosure files (public,
-quarterly, bulk download, no scraping). It **combines** with the text classifier and never
-replaces it:
+quarterly, bulk download, no scraping).
+
+That file currently holds a **hand-seeded 17 employers**, transcribed from the per-company
+research already in `sponsorship_overrides.yaml` with their filing counts and dates intact.
+It is a seed, not the real thing — 17 of 172 configured companies — and running the builder
+will overwrite it, which is the intent. Everything unlisted stays `unknown`, which is the
+honest label: no DOL match means a fuzzy-name miss or a small employer, never a refusal.
+
+It **combines** with the text classifier and never replaces it:
 
 | Text label | History | Result |
 |---|---|---|

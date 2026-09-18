@@ -122,6 +122,15 @@ class Health:
 
     counts: dict[str, int] = field(default_factory=dict)
     last_run_id: int = 0
+    # When the previous run finished, so the next one can say how long the gap was.
+    #
+    # This exists because a dropped schedule is INVISIBLE from the inbox. GitHub delivers
+    # `schedule` on a best-effort basis and drops ticks under load; on this repo a nominally
+    # hourly cron produced run ids 23 through 33 over 37 hours - ten runs where there should
+    # have been thirty-seven, contiguous ids throughout, so nothing crashed and nothing
+    # showed up red. The only symptom was mail that felt irregular, which is not a symptom
+    # anyone can act on. Stamping the gap into the digest turns it into one.
+    last_run_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -429,6 +438,7 @@ def load_health(path: Path = HEALTH_PATH) -> Health:
         return Health(
             counts={str(k): int(v) for k, v in (data.get("counts") or {}).items()},
             last_run_id=int(data.get("last_run_id") or 0),
+            last_run_at=(str(v) if (v := data.get("last_run_at")) else None),
         )
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         log.warning("health file %s unreadable, treating as empty: %s", path, exc)
@@ -439,7 +449,11 @@ def save_health(health: Health, path: Path = HEALTH_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {"counts": health.counts, "last_run_id": health.last_run_id},
+            {
+                "counts": health.counts,
+                "last_run_id": health.last_run_id,
+                "last_run_at": health.last_run_at,
+            },
             sort_keys=True,
             indent=1,
         )

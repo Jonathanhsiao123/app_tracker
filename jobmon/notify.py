@@ -67,7 +67,7 @@ def send_digest(
         title=EMAIL_SUBJECT,
         body="\n\n---\n\n".join(parts),
         priority=3,
-        html_body=format_digest_html(ordered),
+        html_body=format_digest_html(ordered, standalone=True),
     )
 
 
@@ -81,8 +81,17 @@ def digest_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, str]:
     return (-posted.timestamp(), eligibility, analysis.global_id)
 
 
-def format_digest_html(items: list[tuple[Posting, Analysis]]) -> str:
-    """Render categorized openings with readable text links instead of bare URLs."""
+def format_digest_html(
+    items: list[tuple[Posting, Analysis]],
+    heading_level: int = 2,
+    standalone: bool = False,
+) -> str:
+    """Render categorized openings with readable text links instead of bare URLs.
+
+    `standalone` wraps the result in its own `<html><body>` with a title, for the legacy
+    `send_digest` path. `_digest_html` nests this inside a larger document and passes
+    `heading_level=3`, because an `<h2>` inside an `<h2>` section reads as a sibling.
+    """
     groups: dict[str, list[tuple[Posting, Analysis]]] = defaultdict(list)
     for posting, analysis in items:
         category = ", ".join(analysis.function) or analysis.role_class
@@ -105,8 +114,14 @@ def format_digest_html(items: list[tuple[Posting, Analysis]]) -> str:
                     eligibility=escape(analysis.eligibility),
                 )
             )
-        sections.append(f"<h2>{escape(category)}</h2><ul>{''.join(entries)}</ul>")
-    return "<html><body><h1>Jobmon Opening Workflow</h1>" + "".join(sections) + "</body></html>"
+        sections.append(
+            f"<h{heading_level}>{escape(category)}</h{heading_level}>"
+            f"<ul>{''.join(entries)}</ul>"
+        )
+    body = "".join(sections)
+    if not standalone:
+        return body
+    return "<html><body><h1>Jobmon Opening Workflow</h1>" + body + "</body></html>"
 
 
 def instant_rank(item: tuple[Posting, Analysis]) -> tuple[int, int, float, str]:
@@ -214,34 +229,141 @@ def send_profile_digest(
     profile: Profile,
     truncated: int = 0,
     held_by_company: dict[str, int] | None = None,
+    recap: list | None = None,
+    recap_pool: int = 0,
+    run_gap: str | None = None,
 ) -> bool:
     """One batch for one profile, already sorted and capped by `scoring`.
+
+    TWO SECTIONS, and the split is the point (`limits.recap_days`):
+
+      NEW THIS SWEEP   what this run found that you have never been shown. Full detail -
+                       visa badge, evidence, keywords, gaps, variant - because this is the
+                       part you are being notified ABOUT.
+      STILL OPEN       the highest-scoring postings from the last `recap_days` that are
+                       still live and not yet applied to. One line each, grouped by
+                       category in `priorities.order`, because this part is read by
+                       scanning, and the full block repeated every hour is unreadable.
+
+    An hourly sweep finds one or two genuinely new postings, so a digest with only the
+    first section is mostly the sentence "no new eligible openings were found". The second
+    section is what makes an hourly mail worth opening.
 
     TRUNCATION IS STATED, NOT HIDDEN (T8.6, T8.7). A digest that quietly drops its
     twenty-sixth item is a digest you stop trusting, and the whole reason the caps are safe
     to set aggressively is that what they cut is still reachable with one command.
     """
-    if not candidates:
+    recap = recap or []
+    if not candidates and not recap:
+        body = "Sweep complete. No new eligible openings, and nothing still open matches."
+        if run_gap:
+            body += "\n\n" + run_gap
         return _deliver(
-            client,
-            title=EMAIL_SUBJECT,
-            body="Hourly scan complete. No new eligible openings were found.",
-            channel=profile.routing.digest,
+            client, title=EMAIL_SUBJECT, body=body, channel=profile.routing.digest
         )
-    parts = [
-        format_alert(c.posting, c.analysis, profile, c.score) for c in candidates
-    ]
     footer = _truncation_notice(profile, truncated, held_by_company)
-    body = "\n\n---\n\n".join(parts) + footer
+    if run_gap:
+        footer += ("\n" if footer else "\n\n---\n\n") + run_gap
     return _deliver(
         client,
         title=EMAIL_SUBJECT,
-        body=body,
+        body=_digest_text(candidates, recap, recap_pool, profile) + footer,
         priority=3,
-        html_body=format_digest_html([(c.posting, c.analysis) for c in candidates])
-        + (f"<p><em>{escape(footer.strip())}</em></p>" if footer else ""),
+        html_body=_digest_html(candidates, recap, recap_pool, profile, footer),
         channel=profile.routing.digest,
     )
+
+
+def _heading(text: str) -> str:
+    return text + "\n" + "=" * len(text)
+
+
+def _group_by_category(candidates: list) -> dict[str, list]:
+    """Group candidates under their Phase X category, preserving arrival order.
+
+    `scoring.sort_candidates` has already applied the profile's `sort_by`, so insertion
+    order IS the profile's order - a plain dict preserves it, and re-sorting here would
+    silently override `sort_by: score`, `date` or `company`.
+    """
+    groups: dict[str, list] = defaultdict(list)
+    for candidate in candidates:
+        groups[candidate.group or "unclassified"].append(candidate)
+    return groups
+
+
+def _recap_title(profile: Profile, recap: list, recap_pool: int) -> str:
+    days = profile.limits.recap_days
+    window = "today" if days <= 1 else f"last {days} days"
+    shown = f"{len(recap)} of {recap_pool}" if recap_pool > len(recap) else str(len(recap))
+    return f"STILL OPEN - {window} ({shown})"
+
+
+def _one_line(candidate) -> tuple[str, str]:
+    """(what, where) for one compact recap row."""
+    posting = candidate.posting
+    where = ", ".join(posting.locations) or "location not stated"
+    if posting.remote_type:
+        where += f" ({posting.remote_type})"
+    flags = [candidate.analysis.eligibility]
+    if candidate.analysis.degree_gated:
+        flags.append("degree-gated")
+    return (
+        f"{posting.company} - {posting.title}",
+        f"{where} | {' | '.join(flags)} | score {candidate.score:.2f}",
+    )
+
+
+def _digest_text(candidates: list, recap: list, recap_pool: int, profile: Profile) -> str:
+    blocks: list[str] = []
+    if candidates:
+        blocks.append(_heading(f"NEW THIS SWEEP ({len(candidates)})"))
+        blocks.append("\n\n---\n\n".join(
+            format_alert(c.posting, c.analysis, profile, c.score) for c in candidates
+        ))
+    if recap:
+        blocks.append(_heading(_recap_title(profile, recap, recap_pool)))
+        for category, group in _group_by_category(recap).items():
+            lines = [f"{category.upper()} ({len(group)})"]
+            for candidate in group:
+                what, where = _one_line(candidate)
+                lines.append("  " + what)
+                lines.append("    " + where)
+                lines.append("    " + candidate.posting.apply_url)
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _digest_html(
+    candidates: list, recap: list, recap_pool: int, profile: Profile, footer: str
+) -> str:
+    style = "font-family:system-ui,-apple-system,sans-serif;max-width:760px"
+    parts = [
+        f'<html><body style="{style}">',
+        "<h1>Jobmon Opening Workflow</h1>",
+    ]
+    if candidates:
+        parts.append(f"<h2>New this sweep ({len(candidates)})</h2>")
+        parts.append(format_digest_html(
+            [(c.posting, c.analysis) for c in candidates], heading_level=3
+        ))
+    if recap:
+        parts.append(f"<h2>{escape(_recap_title(profile, recap, recap_pool))}</h2>")
+        for category, group in _group_by_category(recap).items():
+            parts.append(f"<h3>{escape(category.title())} ({len(group)})</h3><ul>")
+            for candidate in group:
+                what, where = _one_line(candidate)
+                url = escape(candidate.posting.apply_url, quote=True)
+                parts.append(
+                    f'<li><a href="{url}">{escape(what)}</a><br>'
+                    f'<small style="color:#555">{escape(where)}</small></li>'
+                )
+            parts.append("</ul>")
+    if footer:
+        parts.append(
+            f'<hr><p style="color:#555"><em>{escape(footer.strip())}</em></p>'
+        )
+    parts.append("</body></html>")
+    return "".join(parts)
 
 
 def _truncation_notice(
