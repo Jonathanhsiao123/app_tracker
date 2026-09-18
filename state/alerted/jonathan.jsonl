@@ -28,3 +28,6 @@
 {"alerted_at":"2026-09-18T01:43:51.163829+00:00","channel":"digest","global_id":"greenhouse:eulerity:4714367006","score":0.32999999999999996}
 {"alerted_at":"2026-09-18T01:43:51.163829+00:00","channel":"digest","global_id":"greenhouse:varda:7997888003","score":0.402}
 {"alerted_at":"2026-09-18T01:43:51.163829+00:00","channel":"digest","global_id":"workable:tmeic-americas:65A6C57C3F","score":0.42166666666666663}
+{"alerted_at":"2026-09-18T16:46:19.994229+00:00","channel":"digest","global_id":"ashby:candid-health:4f34ef35-d3e5-40eb-81b1-985d41f652e2","score":0.32999999999999996}
+{"alerted_at":"2026-09-18T16:46:19.994229+00:00","channel":"digest","global_id":"github_repo:conductorai:f5f5c096ebb0442a","score":0.428}
+{"alerted_at":"2026-09-18T16:46:19.994229+00:00","channel":"digest","global_id":"lever:nomagic:332c453d-142f-4110-bc3f-47f2a2b2ee25","score":0.505}
