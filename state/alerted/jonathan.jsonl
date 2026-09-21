@@ -49,3 +49,7 @@
 {"alerted_at":"2026-09-20T16:55:49.987289+00:00","channel":"digest","global_id":"github_repo:thrivent:419049de0b5b8a20","score":0.353}
 {"alerted_at":"2026-09-20T16:55:49.987289+00:00","channel":"digest","global_id":"github_repo:thrivent:77042198284b156c","score":0.353}
 {"alerted_at":"2026-09-21T14:26:37.992830+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:d4fe028f-08a0-4251-8eb9-ef8a017a620d","score":0.6311666666666667}
+{"alerted_at":"2026-09-21T19:40:08.185008+00:00","channel":"digest","global_id":"ashby:ramp:2cfd7ba3-07ba-4dd9-9446-522eae0fe32d","score":0.71}
+{"alerted_at":"2026-09-21T19:40:08.185008+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5241134007","score":0.505}
+{"alerted_at":"2026-09-21T19:40:08.185008+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5243252007","score":0.505}
+{"alerted_at":"2026-09-21T19:40:08.185008+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5244194007","score":0.592}
