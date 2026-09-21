@@ -55,3 +55,7 @@
 {"alerted_at":"2026-09-21T19:40:08.185008+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5244194007","score":0.592}
 {"alerted_at":"2026-09-21T20:57:39.253965+00:00","channel":"digest","global_id":"ashby:notion:72e0f2c1-d599-4301-8096-491835757b9e","score":0.635}
 {"alerted_at":"2026-09-21T20:57:39.253965+00:00","channel":"digest","global_id":"greenhouse:varda:8001042003","score":0.627}
+{"alerted_at":"2026-09-21T23:27:54.491746+00:00","channel":"digest","global_id":"ashby:citizen-health:ca7bfef2-c25c-475b-8cf4-48f145454743","score":0.32999999999999996}
+{"alerted_at":"2026-09-21T23:27:54.491746+00:00","channel":"digest","global_id":"ashby:harvey:2a05532b-4746-45ee-965a-ba423efb62fb","score":0.385}
+{"alerted_at":"2026-09-21T23:27:54.491746+00:00","channel":"digest","global_id":"github_repo:atlassian:64924f5a6547550f","score":0.575}
+{"alerted_at":"2026-09-21T23:27:54.491746+00:00","channel":"digest","global_id":"github_repo:nvidia:d69b2a884999c720","score":0.477}
