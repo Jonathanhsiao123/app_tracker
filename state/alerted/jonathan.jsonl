@@ -70,3 +70,6 @@
 {"alerted_at":"2026-09-23T00:16:56.750207+00:00","channel":"digest","global_id":"github_repo:rippling:a26774dda062ae07","score":0.428}
 {"alerted_at":"2026-09-23T00:16:56.750207+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5244590007","score":0.5992222222222222}
 {"alerted_at":"2026-09-23T00:16:56.750207+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5245821007","score":0.505}
+{"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5246717007","score":0.651}
+{"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:spacex:8834215002","score":0.48}
+{"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:verkada:5246191007","score":0.43}
