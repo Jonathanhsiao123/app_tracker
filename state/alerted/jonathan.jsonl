@@ -82,3 +82,4 @@
 {"alerted_at":"2026-09-23T20:10:45.468591+00:00","channel":"digest","global_id":"github_repo:onepay:5f7f246126e4e5a8","score":0.353}
 {"alerted_at":"2026-09-23T20:10:45.468591+00:00","channel":"digest","global_id":"github_repo:singlestore:8f9366b91ff4159f","score":0.428}
 {"alerted_at":"2026-09-23T20:10:45.468591+00:00","channel":"digest","global_id":"greenhouse:axon:7837133003","score":0.58}
+{"alerted_at":"2026-09-23T23:10:54.824472+00:00","channel":"digest","global_id":"github_repo:qumulo:cea7e201dd6d2d14","score":0.428}
