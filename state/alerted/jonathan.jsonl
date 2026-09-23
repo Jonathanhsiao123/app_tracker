@@ -73,3 +73,5 @@
 {"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5246717007","score":0.651}
 {"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:spacex:8834215002","score":0.48}
 {"alerted_at":"2026-09-23T05:49:33.032714+00:00","channel":"digest","global_id":"greenhouse:verkada:5246191007","score":0.43}
+{"alerted_at":"2026-09-23T16:45:31.180062+00:00","channel":"digest","global_id":"ashby:lambda:d5157983-c3e7-493d-82fb-e2580ab4e698","score":0.355}
+{"alerted_at":"2026-09-23T16:45:31.180062+00:00","channel":"digest","global_id":"greenhouse:verkada:5245706007","score":0.43}
