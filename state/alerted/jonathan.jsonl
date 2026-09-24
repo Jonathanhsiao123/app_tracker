@@ -94,3 +94,6 @@
 {"alerted_at":"2026-09-24T14:54:11.378338+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:eb074e89-87c3-4dd6-931b-957f21c6f7a1","score":0.62075}
 {"alerted_at":"2026-09-24T17:34:32.920578+00:00","channel":"digest","global_id":"ashby:commure:70cc0958-2b4f-47ee-b0f8-b22140e39f32","score":0.505}
 {"alerted_at":"2026-09-24T17:34:32.920578+00:00","channel":"digest","global_id":"github_repo:seatgeek:31431d426fba0686","score":0.428}
+{"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:ambrook:efbc2e29-5888-43a3-bb9a-8758cfef9282","score":0.32999999999999996}
+{"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:citizen-health:22cdb1fa-c679-47bc-98bf-d00e938ffa48","score":0.603}
+{"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:citizen-health:fe42bcc5-036a-4a3e-9eaa-8d4227b98ac9","score":0.58}
