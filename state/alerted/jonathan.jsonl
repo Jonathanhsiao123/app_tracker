@@ -92,3 +92,5 @@
 {"alerted_at":"2026-09-24T01:40:24.571389+00:00","channel":"digest","global_id":"greenhouse:varda:8004020003","score":0.505}
 {"alerted_at":"2026-09-24T09:53:24.493855+00:00","channel":"digest","global_id":"ashby:harvey:2fc3b6a6-9228-4d44-a1e7-48009a4f2b00","score":0.385}
 {"alerted_at":"2026-09-24T14:54:11.378338+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:eb074e89-87c3-4dd6-931b-957f21c6f7a1","score":0.62075}
+{"alerted_at":"2026-09-24T17:34:32.920578+00:00","channel":"digest","global_id":"ashby:commure:70cc0958-2b4f-47ee-b0f8-b22140e39f32","score":0.505}
+{"alerted_at":"2026-09-24T17:34:32.920578+00:00","channel":"digest","global_id":"github_repo:seatgeek:31431d426fba0686","score":0.428}
