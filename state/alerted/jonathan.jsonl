@@ -103,3 +103,13 @@
 {"alerted_at":"2026-09-25T10:35:29.413615+00:00","channel":"digest","global_id":"github_repo:labcorp:d2ea51b6c3304117","score":0.304}
 {"alerted_at":"2026-09-25T18:29:22.909235+00:00","channel":"digest","global_id":"ashby:ambrook:899496e3-cbb0-4c84-885a-7391991054b5","score":0.751}
 {"alerted_at":"2026-09-25T18:29:22.909235+00:00","channel":"digest","global_id":"github_repo:amazon:8c20bed5467562ac","score":0.428}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:harvey:ac029bf4-0abd-434e-911e-fbb22921ace3","score":0.385}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:harvey:ae15faa5-f306-4abd-a10a-4b1212c208d9","score":0.385}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:harvey:d6ba6f18-42c8-4bcd-88a7-f6145c472c78","score":0.45999999999999996}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:persona:8c7918f2-cc3e-4bd6-8dd6-0f57d2ffb670","score":0.32999999999999996}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:f421a524-72da-4dd6-a549-bbee9e98622e","score":0.62075}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"ashby:skydio:d415cf2b-616c-459e-9c5f-58a1b2c4a1bb","score":0.7653333333333333}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"github_repo:aerotech:454b4ab887a70f53","score":0.32999999999999996}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"github_repo:f5:2661f24a7fac9f17","score":0.428}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"github_repo:innovative-systems:8efd473905dd55aa","score":0.32999999999999996}
+{"alerted_at":"2026-09-25T19:35:12.927241+00:00","channel":"digest","global_id":"github_repo:innovative-systems:ffe40dab4c5b4d85","score":0.32999999999999996}
