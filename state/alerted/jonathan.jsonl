@@ -97,3 +97,6 @@
 {"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:ambrook:efbc2e29-5888-43a3-bb9a-8758cfef9282","score":0.32999999999999996}
 {"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:citizen-health:22cdb1fa-c679-47bc-98bf-d00e938ffa48","score":0.603}
 {"alerted_at":"2026-09-24T19:01:42.140479+00:00","channel":"digest","global_id":"ashby:citizen-health:fe42bcc5-036a-4a3e-9eaa-8d4227b98ac9","score":0.58}
+{"alerted_at":"2026-09-25T00:02:12.465912+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5002801007","score":0.651}
+{"alerted_at":"2026-09-25T00:02:12.465912+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5248741007","score":0.726}
+{"alerted_at":"2026-09-25T00:02:12.465912+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5248750007","score":0.651}
