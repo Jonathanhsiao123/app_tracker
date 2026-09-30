@@ -152,3 +152,7 @@
 {"alerted_at":"2026-09-30T09:02:03.986372+00:00","channel":"digest","global_id":"ashby:commure:f947983b-ebcc-44b9-b329-2eaf498e2aa7","score":0.5418888888888889}
 {"alerted_at":"2026-09-30T13:35:17.842988+00:00","channel":"digest","global_id":"greenhouse:verkada:5248108007","score":0.43}
 {"alerted_at":"2026-09-30T13:35:17.842988+00:00","channel":"digest","global_id":"greenhouse:verkada:5251121007","score":0.43}
+{"alerted_at":"2026-09-30T16:07:00.165441+00:00","channel":"digest","global_id":"ashby:harvey:89461ea3-7788-4aa6-8d9a-dc5fa2c0e9e0","score":0.385}
+{"alerted_at":"2026-09-30T16:07:00.165441+00:00","channel":"digest","global_id":"ashby:harvey:95b0e486-e777-4435-a842-19db85d1f137","score":0.385}
+{"alerted_at":"2026-09-30T16:07:00.165441+00:00","channel":"digest","global_id":"ashby:harvey:98572b27-b6fc-4682-a441-62874eb10265","score":0.385}
+{"alerted_at":"2026-09-30T16:07:00.165441+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5252078007","score":0.652}
