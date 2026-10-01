@@ -174,3 +174,5 @@
 {"alerted_at":"2026-10-01T19:40:58.622216+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5248371007","score":0.652}
 {"alerted_at":"2026-10-01T20:32:46.909279+00:00","channel":"digest","global_id":"github_repo:amazon:61748b69d1954ca6","score":0.628}
 {"alerted_at":"2026-10-01T20:32:46.909279+00:00","channel":"digest","global_id":"github_repo:clay:0b63c31f5ae1adf2","score":0.32999999999999996}
+{"alerted_at":"2026-10-01T21:45:41.252573+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5254831007","score":0.652}
+{"alerted_at":"2026-10-01T21:45:41.252573+00:00","channel":"digest","global_id":"greenhouse:axon:8010994003","score":0.678}
