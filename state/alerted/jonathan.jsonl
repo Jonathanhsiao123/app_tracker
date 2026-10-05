@@ -205,3 +205,10 @@
 {"alerted_at":"2026-10-05T06:51:03.437155+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5256523007","score":0.505}
 {"alerted_at":"2026-10-05T15:52:21.633438+00:00","channel":"digest","global_id":"ashby:elevenlabs:41b892ba-b530-44cb-9ae1-178908fc324c","score":0.629}
 {"alerted_at":"2026-10-05T15:52:21.633438+00:00","channel":"digest","global_id":"ashby:telus-digital:8d3d6fc9-24eb-499b-a654-5e4229d9c398","score":0.543625}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:cape:ba0cdd14-ad58-4b90-b036-d6d4d77f125e","score":0.526}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:elevenlabs:257f24da-83db-4bad-a6dc-37793a1a0bac","score":0.629}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:elevenlabs:69694001-b760-4939-9a02-e75c046b89d3","score":0.654}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:eliseai:ed53292e-97c9-4ecb-8e0f-c0ec1dce8158","score":0.32999999999999996}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:replit:de941de4-b0f2-4de8-a018-af667c67f33e","score":0.7976666666666666}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"github_repo:khan-academy:2f863d30e0a77121","score":0.353}
+{"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"greenhouse:figma:6212642004","score":0.505}
