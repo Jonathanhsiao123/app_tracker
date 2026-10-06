@@ -212,3 +212,8 @@
 {"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"ashby:replit:de941de4-b0f2-4de8-a018-af667c67f33e","score":0.7976666666666666}
 {"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"github_repo:khan-academy:2f863d30e0a77121","score":0.353}
 {"alerted_at":"2026-10-05T22:31:51.616123+00:00","channel":"digest","global_id":"greenhouse:figma:6212642004","score":0.505}
+{"alerted_at":"2026-10-06T02:53:07.506629+00:00","channel":"digest","global_id":"ashby:harvey:e196283b-5615-4688-a37b-4fe325a6ec3d","score":0.656}
+{"alerted_at":"2026-10-06T02:53:07.506629+00:00","channel":"digest","global_id":"github_repo:atlassian:c3b1888a660a0a3d","score":0.379}
+{"alerted_at":"2026-10-06T02:53:07.506629+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5253705007","score":0.505}
+{"alerted_at":"2026-10-06T02:53:07.506629+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5256524007","score":0.505}
+{"alerted_at":"2026-10-06T02:53:07.506629+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5256525007","score":0.505}
