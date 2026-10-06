@@ -222,3 +222,8 @@
 {"alerted_at":"2026-10-06T10:05:00.619541+00:00","channel":"digest","global_id":"github_repo:expedia:2b7450ba501e30fe","score":0.32999999999999996}
 {"alerted_at":"2026-10-06T10:05:00.619541+00:00","channel":"digest","global_id":"github_repo:expedia:f82091573d5dadd6","score":0.428}
 {"alerted_at":"2026-10-06T16:41:36.468347+00:00","channel":"digest","global_id":"ashby:elevenlabs:3b807ff1-a6b0-4f1c-b4f4-6ab265ac6d2f","score":0.604}
+{"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:clipboard-health:c38407db-8cf5-4698-9ba4-68bedf01d684","score":0.32999999999999996}
+{"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:commure:39e07152-a3d2-47c0-8c5b-36e8b3a6cdf5","score":0.5418888888888889}
+{"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:eliseai:f519e568-db9b-4adc-b4fa-0c0afd12b257","score":0.58}
+{"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:ramp:b599c5a9-9c9d-4826-b67a-ca5e012faaad","score":0.71}
+{"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"greenhouse:varda:8014571003","score":0.627}
