@@ -227,3 +227,11 @@
 {"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:eliseai:f519e568-db9b-4adc-b4fa-0c0afd12b257","score":0.58}
 {"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"ashby:ramp:b599c5a9-9c9d-4826-b67a-ca5e012faaad","score":0.71}
 {"alerted_at":"2026-10-06T21:34:45.765843+00:00","channel":"digest","global_id":"greenhouse:varda:8014571003","score":0.627}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:0b49e208-bbf2-4ff3-a46d-47aa4617f453","score":0.652}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"github_repo:docusign:b71e4f2f82c5b9ab","score":0.428}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"github_repo:expedia:f12ded8c06c901c3","score":0.32999999999999996}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"github_repo:f5:bd8ec0f8baeb4439","score":0.428}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5244483007","score":0.479}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5248570007","score":0.505}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"greenhouse:perpay:5252881007","score":0.5630000000000001}
+{"alerted_at":"2026-10-07T01:24:09.852852+00:00","channel":"digest","global_id":"greenhouse:varda:8015207003","score":0.652}
