@@ -241,3 +241,9 @@
 {"alerted_at":"2026-10-07T16:20:00.996191+00:00","channel":"digest","global_id":"ashby:elevenlabs:b8a111fa-9fd5-44d0-97ed-8fd1280be4ef","score":0.8}
 {"alerted_at":"2026-10-07T16:20:00.996191+00:00","channel":"digest","global_id":"github_repo:highmark-health:9eb5e46068707b93","score":0.379}
 {"alerted_at":"2026-10-07T16:20:00.996191+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5161935007","score":0.455}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"ashby:eliseai:3e165ca5-0fb6-412d-b76c-d8f8045bd418","score":0.58}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"ashby:notion:4f678608-f9f7-455d-b81c-9433ec974d0e","score":0.45999999999999996}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"github_repo:boston-scientific:af0adf310ab30cca","score":0.304}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"github_repo:knowbe4:e44fd97f187e0597","score":0.353}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"greenhouse:scale-ai:4741087005","score":0.505}
+{"alerted_at":"2026-10-07T21:55:38.047063+00:00","channel":"digest","global_id":"workable:perry-homes:B0F44EBB9B","score":0.402}
