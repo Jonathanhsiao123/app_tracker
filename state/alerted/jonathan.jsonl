@@ -270,3 +270,8 @@
 {"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:luma:32e4a89b-1a6d-4e53-af6a-fde323db9022","score":0.602}
 {"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:luma:610f1bea-3d4a-412c-90b6-5938658beb72","score":0.602}
 {"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"greenhouse:varda:8016301003","score":0.527}
+{"alerted_at":"2026-10-08T21:59:10.185771+00:00","channel":"digest","global_id":"ashby:elevenlabs:31a6f0f4-8e1d-4d77-9d00-026ed12213f2","score":0.7405}
+{"alerted_at":"2026-10-08T21:59:10.185771+00:00","channel":"digest","global_id":"ashby:skydio:9cb4555e-4fd1-410b-921b-cc17d56ba5df","score":0.7486666666666667}
+{"alerted_at":"2026-10-08T21:59:10.185771+00:00","channel":"digest","global_id":"greenhouse:perpay:5260444007","score":0.4675}
+{"alerted_at":"2026-10-08T21:59:10.185771+00:00","channel":"digest","global_id":"greenhouse:perpay:5260960007","score":0.504}
+{"alerted_at":"2026-10-08T21:59:10.185771+00:00","channel":"digest","global_id":"workable:twg-global:70C65F8D0E","score":0.505}
