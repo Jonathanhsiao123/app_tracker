@@ -263,3 +263,10 @@
 {"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:sailpoint:b4711cc27a588ecd","score":0.353}
 {"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:salesforce:094b7e65ae271db0","score":0.32999999999999996}
 {"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:salesforce:560929a705f70451","score":0.32999999999999996}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:elevenlabs:974c2288-d49d-4f05-8d74-0feb08445637","score":0.355}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:harvey:2619ade0-b568-44b5-9931-0c8b064d43ea","score":0.385}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:harvey:95d7c087-8283-4e17-937d-2ee363ec95ef","score":0.385}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:luma:1c37dc20-ce89-4b3b-977b-1bfd97bcc233","score":0.4716666666666667}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:luma:32e4a89b-1a6d-4e53-af6a-fde323db9022","score":0.602}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"ashby:luma:610f1bea-3d4a-412c-90b6-5938658beb72","score":0.602}
+{"alerted_at":"2026-10-08T16:22:27.748034+00:00","channel":"digest","global_id":"greenhouse:varda:8016301003","score":0.527}
