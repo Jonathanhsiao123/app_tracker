@@ -258,3 +258,8 @@
 {"alerted_at":"2026-10-08T01:47:16.064036+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5260387007","score":0.626}
 {"alerted_at":"2026-10-08T01:47:16.064036+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5260436007","score":0.5467500000000001}
 {"alerted_at":"2026-10-08T01:47:16.064036+00:00","channel":"digest","global_id":"lever:palantir:1b690123-1766-4e75-a0ef-0f58afa864b4","score":0.7873333333333333}
+{"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:icf-international:3d0efac74f2583bf","score":0.304}
+{"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:mckesson:de2a18fe408910b6","score":0.428}
+{"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:sailpoint:b4711cc27a588ecd","score":0.353}
+{"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:salesforce:094b7e65ae271db0","score":0.32999999999999996}
+{"alerted_at":"2026-10-08T08:48:45.464057+00:00","channel":"digest","global_id":"github_repo:salesforce:560929a705f70451","score":0.32999999999999996}
