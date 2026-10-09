@@ -283,3 +283,8 @@
 {"alerted_at":"2026-10-09T01:57:55.490655+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5255071007","score":0.505}
 {"alerted_at":"2026-10-09T01:57:55.490655+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5261749007","score":0.455}
 {"alerted_at":"2026-10-09T01:57:55.490655+00:00","channel":"digest","global_id":"greenhouse:varda:8017264003","score":0.652}
+{"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:elevenlabs:a1c86d02-e9df-4580-87e4-1333f2b83e94","score":0.453}
+{"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:elevenlabs:e6924f60-c8cc-42b3-9d05-2442ec30e12d","score":0.453}
+{"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:harvey:633df5f6-fd69-4066-96c8-7c5c06d9ba33","score":0.385}
+{"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:harvey:864392c2-9ff4-4b95-9e06-46bf46bf6522","score":0.385}
+{"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:526c87f2-fba4-4744-8b87-1cb949b5cdfc","score":0.402}
