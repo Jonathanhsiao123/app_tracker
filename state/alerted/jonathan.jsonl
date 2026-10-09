@@ -288,3 +288,6 @@
 {"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:harvey:633df5f6-fd69-4066-96c8-7c5c06d9ba33","score":0.385}
 {"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:harvey:864392c2-9ff4-4b95-9e06-46bf46bf6522","score":0.385}
 {"alerted_at":"2026-10-09T16:06:04.302441+00:00","channel":"digest","global_id":"ashby:rivian-and-volkswagen-technologies:526c87f2-fba4-4744-8b87-1cb949b5cdfc","score":0.402}
+{"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:lambda:cea27d13-db06-4027-9007-a1a4cd820662","score":0.605}
+{"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:sentry:1c34ea48-ab62-4b71-a7d7-d0ac9eb07bba","score":0.7052222222222222}
+{"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:sentry:5ee81d6f-e837-43bb-af06-8f26c992a766","score":0.7052222222222222}
