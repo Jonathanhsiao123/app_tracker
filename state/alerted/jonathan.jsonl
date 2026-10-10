@@ -291,3 +291,9 @@
 {"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:lambda:cea27d13-db06-4027-9007-a1a4cd820662","score":0.605}
 {"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:sentry:1c34ea48-ab62-4b71-a7d7-d0ac9eb07bba","score":0.7052222222222222}
 {"alerted_at":"2026-10-09T20:49:14.586772+00:00","channel":"digest","global_id":"ashby:sentry:5ee81d6f-e837-43bb-af06-8f26c992a766","score":0.7052222222222222}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"github_repo:docusign:259536e5618211f8","score":0.428}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"github_repo:docusign:3f6b331c0732803d","score":0.428}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"github_repo:docusign:d417c0605c8a2bf3","score":0.428}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5167646007","score":0.505}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5261456007","score":0.701}
+{"alerted_at":"2026-10-10T00:42:14.036587+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5262583007","score":0.505}
