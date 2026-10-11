@@ -302,3 +302,7 @@
 {"alerted_at":"2026-10-10T18:26:09.890636+00:00","channel":"digest","global_id":"github_repo:arcesium:aff09627eeab9f1f","score":0.428}
 {"alerted_at":"2026-10-10T22:24:24.443561+00:00","channel":"digest","global_id":"github_repo:carnegie-mellon-university:ac9589d1ec730a84","score":0.526}
 {"alerted_at":"2026-10-10T22:24:24.443561+00:00","channel":"digest","global_id":"github_repo:carnegie-mellon-university:b6c4e8d77389da76","score":0.526}
+{"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"github_repo:docusign:2e05d53ff559495d","score":0.428}
+{"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"github_repo:docusign:767687302826aa08","score":0.428}
+{"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"github_repo:docusign:8a72d30503eff564","score":0.428}
+{"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"greenhouse:varda:8023135003","score":0.402}
