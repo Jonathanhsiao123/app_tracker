@@ -307,3 +307,5 @@
 {"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"github_repo:docusign:8a72d30503eff564","score":0.428}
 {"alerted_at":"2026-10-11T01:47:16.730787+00:00","channel":"digest","global_id":"greenhouse:varda:8023135003","score":0.402}
 {"alerted_at":"2026-10-11T15:33:47.349136+00:00","channel":"digest","global_id":"greenhouse:atoms:8616620002","score":0.32999999999999996}
+{"alerted_at":"2026-10-11T20:10:13.765081+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5166903007","score":0.455}
+{"alerted_at":"2026-10-11T20:10:13.765081+00:00","channel":"digest","global_id":"greenhouse:varda:8025168003","score":0.627}
