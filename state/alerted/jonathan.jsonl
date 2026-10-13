@@ -334,3 +334,7 @@
 {"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:west-monroe:a0ce6cf4a08c3185","score":0.575}
 {"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"greenhouse:verkada:5262546007","score":0.8943749999999999}
 {"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"workable:tmeic-americas:C4B8B72648","score":0.75}
+{"alerted_at":"2026-10-13T23:23:39.317310+00:00","channel":"digest","global_id":"ashby:eliseai:9c7237df-5283-4802-af7b-dfbfefe31f17","score":0.36062500000000003}
+{"alerted_at":"2026-10-13T23:23:39.317310+00:00","channel":"digest","global_id":"github_repo:carbon-robotics:ac7d8dcef6bb5a44","score":0.5137499999999999}
+{"alerted_at":"2026-10-13T23:23:39.317310+00:00","channel":"digest","global_id":"greenhouse:syska-hennessy:8280160","score":0.421875}
+{"alerted_at":"2026-10-13T23:23:39.317310+00:00","channel":"digest","global_id":"greenhouse:virtu-financial:4822506002","score":0.36062500000000003}
