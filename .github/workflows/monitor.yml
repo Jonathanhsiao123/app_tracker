@@ -115,6 +115,11 @@ jobs:
           JOBMON_SMTP_PASSWORD: ${{ secrets.JOBMON_SMTP_PASSWORD }}
           JOBMON_EMAIL_FROM: ${{ secrets.JOBMON_EMAIL_FROM }}
           JOBMON_EMAIL_TO: ${{ secrets.JOBMON_EMAIL_TO }}
+          # The LLM clearance screen (profile `screening.enabled`). Unset = the screen is
+          # skipped with a footer note, never a failed run. JOBMON_LLM_SCREEN is a
+          # repository VARIABLE (not a secret): set it to `off` to disable without a commit.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JOBMON_LLM_SCREEN: ${{ vars.JOBMON_LLM_SCREEN }}
           DRY_RUN: ${{ inputs.dry_run }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |

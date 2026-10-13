@@ -72,7 +72,9 @@ def test_the_shipped_profile_loads():
     assert jonathan.eligibility.on_unknown == "digest"
     assert jonathan.roles.on_unclear_role == "digest"
     assert jonathan.limits.max_digest_items == 25
-    assert jonathan.roles.priorities.order == ["mle", "security", "systems", "swe", "data"]
+    assert jonathan.roles.priorities.order == [
+        "mle", "security", "systems", "swe", "data", "hardware", "product", "business",
+    ]
 
 
 # --- T8.12: a corrupt profile fails loudly and NEVER falls back ------------------------

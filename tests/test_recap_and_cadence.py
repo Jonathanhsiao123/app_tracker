@@ -417,7 +417,7 @@ def test_digest_renders_both_sections_and_states_the_recap_window(monkeypatch):
     )
     assert "NEW THIS SWEEP (1)" in sent["body"]
     assert "STILL OPEN - last 3 days (1 of 55)" in sent["body"]
-    assert "MLE (1)" in sent["body"]
+    assert "MACHINE LEARNING / AI (1)" in sent["body"]
     assert "Other - Open Req" in sent["body"]
 
 
@@ -448,7 +448,8 @@ def test_recap_groups_follow_the_profiles_priority_order(monkeypatch):
                FakeCandidate("b", "B", "T2", group="swe"),
                FakeCandidate("c", "C", "T3", group="mle")],
     )
-    assert sent["body"].index("MLE (2)") < sent["body"].index("SWE (1)")
+    body = sent["body"]
+    assert body.index("MACHINE LEARNING / AI (2)") < body.index("SOFTWARE ENGINEERING (1)")
 
 
 def test_digest_html_is_one_document_with_nested_headings(monkeypatch):

@@ -25,9 +25,10 @@ from pathlib import Path
 
 from . import config_loader, ledger, normalize, notify, profiles, scoring, store
 from .adapters import ats_public, github_repos
-from .analyze import keywords, sponsorship, variants
+from .analyze import keywords, screen, sponsorship, variants
 from .filters import eligibility, role
 from .models import AdapterHealth, Analysis, Posting
+from .normalize import url_identity
 from .profiles import Profile
 
 log = logging.getLogger(__name__)
@@ -102,6 +103,7 @@ def run_scheduled(
     state_dir = ledger.resolve_state_dir(ledger_path)
     state = ledger.load_state(state_dir)
     previous_health = ledger.load_health(health_path)
+    screen_cache = screen.load_cache(state_dir)
     # Which postings had never been delivered to anyone before this run started. Used
     # below to count re-deliveries; captured now because the cache is about to be written.
     undelivered_before = {
@@ -121,6 +123,7 @@ def run_scheduled(
             result = run(
                 conn, dry_run=dry_run, seed=seed, run_id=run_id,
                 profile_list=profile_list, run_gap=describe_run_gap(previous_health),
+                screen_cache=screen_cache,
             )
 
             # Postings carried over from the ledger that were never delivered: either a
@@ -132,7 +135,9 @@ def run_scheduled(
 
             if not dry_run:
                 # Only now, after delivery, is the durable state allowed to move.
-                ledger.save_state(ledger.state_from_db(conn), state_dir)
+                saved = ledger.state_from_db(conn)
+                ledger.save_state(saved, state_dir)
+                screen.save_cache(screen_cache, state_dir, keep=set(saved.entries))
                 ledger.save_health(
                     ledger.Health(
                         counts=current,
@@ -196,6 +201,7 @@ def run(
     run_id: int | None = None,
     profile_list: list[Profile] | None = None,
     run_gap: str | None = None,
+    screen_cache: dict[str, screen.Screen] | None = None,
 ) -> RunResult:
     """Execute one full pass.
 
@@ -302,10 +308,18 @@ def run(
         # profile loop reads `unalerted_postings` - both that query and the recap exclude
         # rows in `duplicates`, so a copy marked here is silently dropped from the mail
         # rather than arriving beside the req it duplicates.
-        merged = store.dedup_by_ats_token(conn, run_id)
+        #
+        # `reconcile_duplicates` recomputes every copy relationship among live postings
+        # from scratch each sweep: the `duplicates` table is not in the ledger, so a copy
+        # marked only on the run that inserted it was back in the mail an hour later.
+        merged = store.reconcile_duplicates(conn, run_id)
         if merged:
-            log.info("dedup: %d same-req copies folded into their canonical posting", merged)
+            log.info("dedup: %d copies folded into their canonical posting", merged)
             result.duplicates += merged
+
+        screener = _make_screener(
+            profile_list, client, screen_cache if screen_cache is not None else {}, seed
+        )
 
         # One ANALYSIS pass, then one loop per profile. Analysis is objective and is
         # shared; the profile loop below never touches a posting or analysis record
@@ -324,7 +338,7 @@ def run(
             ]
             outcome = _deliver_profile(
                 client, conn, profile, pending, cfg, tier, dry_run=dry_run, seed=seed,
-                run_id=run_id, run_gap=run_gap,
+                run_id=run_id, run_gap=run_gap, screener=screener,
             )
             result.profiles[profile.name] = outcome
             result.alerted += outcome.alerted
@@ -332,7 +346,35 @@ def run(
             result.closed += outcome.closed
             result.seeded += outcome.seeded
             result.alerted_ids.extend(outcome.alerted_ids)
+    if screener is not None:
+        log.info("screen: %d call(s), %d failed, %d unscreened",
+                 screener.calls, screener.failed, screener.unscreened)
     return result
+
+
+def _make_screener(
+    profile_list: list[Profile], client, cache: dict[str, screen.Screen], seed: bool
+) -> screen.Screener | None:
+    """One shared screener when any profile has `screening.enabled`, else None.
+
+    Verdicts are objective and cached per posting, so profiles share them; the first
+    enabled profile's model and page-fetch setting are used, with the largest budget.
+    `--seed` sends nothing, so it screens nothing.
+    """
+    enabled = [p for p in profile_list if p.screening.enabled]
+    if seed or not enabled:
+        return None
+    if screen.disabled_by_env():
+        log.info("screen: JOBMON_LLM_SCREEN=off; clearance screening skipped this run")
+        return None
+    first = enabled[0].screening
+    return screen.Screener(
+        cache,
+        model=first.model,
+        http=client,
+        fetch_pages=first.fetch_pages,
+        max_calls=max(p.screening.max_calls_per_run for p in enabled),
+    )
 
 
 @dataclass(slots=True)
@@ -353,6 +395,8 @@ class ProfileResult:
     recap: int = 0            # still-open items carried in the digest's second section
     recap_pool: int = 0       # how many qualified before `max_recap_items` cut it
     recap_truncated: int = 0
+    screened_out: int = 0     # dropped by the LLM clearance screen (NEW and recap)
+    repeats: int = 0          # same job link already listed in this digest; folded
     alerted_ids: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -361,7 +405,8 @@ class ProfileResult:
             f"digest={self.digest} silent={self.silent} alerted={self.alerted} "
             f"blocked={self.blocked} truncated={self.truncated_digest} "
             f"company_held={self.held_by_company} "
-            f"recap={self.recap}/{self.recap_pool}"
+            f"recap={self.recap}/{self.recap_pool} screened_out={self.screened_out} "
+            f"repeats={self.repeats}"
         )
 
 
@@ -376,6 +421,7 @@ def _deliver_profile(
     seed: bool = False,
     run_id: int = 0,
     run_gap: str | None = None,
+    screener: screen.Screener | None = None,
 ) -> ProfileResult:
     """Score, route, cap, sort and send one profile's share of this run.
 
@@ -383,7 +429,10 @@ def _deliver_profile(
     that arrives after the digest listing the same posting is just a duplicate.
     """
     out = ProfileResult(profile=profile.name, considered=len(pending))
-    applied = store.applied_ids(conn) if profile.limits.suppress_if_applied else set()
+    applied = (
+        store.applied_ids(conn, include_copies=True)
+        if profile.limits.suppress_if_applied else set()
+    )
     reposts = store.reposted_ids(conn) if profile.limits.suppress_reposts else set()
 
     candidates: list[scoring.Candidate] = []
@@ -400,6 +449,14 @@ def _deliver_profile(
         if candidate.route == "silent" and analysis.eligibility == "blocked":
             out.blocked += 1
         candidates.append(candidate)
+
+    # Screen BEFORE the caps, so a clearance req never takes a slot a clean one could have.
+    if screener is not None and profile.screening.enabled:
+        screener.ensure([c.posting for c in candidates if c.route != "silent"])
+        candidates = [
+            c if c.route == "silent" else _apply_screen(c, profile, screener, tier, applied, out)
+            for c in candidates
+        ]
 
     day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     capped = scoring.apply_caps(
@@ -423,14 +480,25 @@ def _deliver_profile(
     recap = _build_recap(
         conn, profile, cfg, tier, applied, reposts, run_id,
         exclude={c.global_id for c in (*ordered_instant, *ordered_digest)},
-        skip=seed,
+        skip=seed, screener=screener, result=out,
     )
     out.recap_pool = len(recap)
     cap = profile.limits.max_recap_items
     if cap is not None and len(recap) > cap:
         out.recap_truncated = len(recap) - cap
         recap = recap[:cap]
+    # Last line of defence against the same job twice in one mail: whatever the dedup pass
+    # missed, two entries carrying the same job link are one entry. A folded NEW item is
+    # still marked delivered below - it was, under the copy that stayed.
+    ordered_instant, ordered_digest, recap, folded = _fold_repeats(
+        ordered_instant, ordered_digest, recap
+    )
+    out.repeats = len(folded)
     out.recap = len(recap)
+    if screener is not None and profile.screening.enabled:
+        note = screener.note()
+        if note:
+            run_gap = f"{run_gap}\n{note}" if run_gap else note
 
     if seed:
         # Store everything as already-alerted so the next run only reports genuine
@@ -471,7 +539,7 @@ def _deliver_profile(
         # `mark_alerted` runs only for what was actually delivered. A failed send leaves
         # no alert row, so the posting is retried next run rather than lost - one
         # duplicate costs less than one missed posting.
-        ids = [c.global_id for c in ordered_digest]
+        ids = [c.global_id for c in ordered_digest] + folded
         store.mark_alerted(conn, ids, now, profile=profile.name, channel="digest",
                            scores={c.global_id: c.score for c in ordered_digest})
         out.alerted_ids.extend(ids)
@@ -489,6 +557,8 @@ def _build_recap(
     run_id: int,
     exclude: set[str],
     skip: bool = False,
+    screener: screen.Screener | None = None,
+    result: ProfileResult | None = None,
 ) -> list[scoring.Candidate]:
     """The digest's second section: what is still open, not just what is new.
 
@@ -523,7 +593,101 @@ def _build_recap(
             candidate.score >= profile.limits.min_score
         ):
             out.append(candidate)
-    return scoring.sort_candidates(out, profile)
+    ordered = scoring.sort_candidates(out, profile)
+    if screener is None or not profile.screening.enabled:
+        return ordered
+    return _screen_recap(ordered, profile, screener, tier, applied, result)
+
+
+def _screen_recap(
+    ordered: list[scoring.Candidate],
+    profile: Profile,
+    screener: screen.Screener,
+    tier: set[str],
+    applied: set[str],
+    result: ProfileResult | None,
+) -> list[scoring.Candidate]:
+    """Screen the recap best-first, only as deep as `max_recap_items` needs.
+
+    The pool runs to a few hundred postings while the section shows 25, so screening all
+    of it up front would spend most of the budget on rows nobody reads. Batches are taken
+    in rank order until enough clean rows are found; what lies beyond stays unscreened and
+    below them. Verdicts are cached, so the pool is worked through over a few runs anyway.
+    """
+    need = profile.limits.max_recap_items or len(ordered)
+    sink = result if result is not None else ProfileResult(profile=profile.name)
+    kept: list[scoring.Candidate] = []
+    i = 0
+    while i < len(ordered) and len(kept) < need:
+        batch = ordered[i:i + max(need - len(kept), 8)]
+        i += len(batch)
+        screener.ensure([c.posting for c in batch])
+        for c in batch:
+            c = _apply_screen(c, profile, screener, tier, applied, sink)
+            if c.route in ("digest", "instant") and c.score >= profile.limits.min_score:
+                kept.append(c)
+    return scoring.sort_candidates([*kept, *ordered[i:]], profile)
+
+
+def _apply_screen(
+    candidate: scoring.Candidate,
+    profile: Profile,
+    screener: screen.Screener,
+    tier: set[str],
+    applied: set[str],
+    result: ProfileResult,
+) -> scoring.Candidate:
+    """Fold one posting's screen verdict into its routing, for one profile.
+
+    No verdict (budget spent, API down) leaves the candidate exactly as the regex rules
+    left it. A clearance or citizenship verdict silences it, with the model's quoted
+    evidence as the reason. A posting the classifier could not place takes the model's
+    category and is re-routed, so its score and its group both reflect it.
+    """
+    verdict = screener.get(candidate.global_id)
+    if verdict is None:
+        return candidate
+    unclear_out = verdict.verdict == "unclear" and profile.screening.on_unclear == "suppress"
+    if verdict.blocks or unclear_out:
+        candidate.route = "silent"
+        why = f"clearance screen: {verdict.verdict}"
+        if verdict.evidence:
+            why += f' - "{verdict.evidence}"'
+        candidate.reasons.append(why)
+        result.screened_out += 1
+        return candidate
+    if not candidate.analysis.function and verdict.category not in ("", "other"):
+        candidate.analysis.function = [verdict.category]  # type: ignore[list-item]
+        rerouted = scoring.route(candidate.posting, candidate.analysis, profile, tier, applied)
+        rerouted.reasons.append(f"category {verdict.category!r} from the clearance screen")
+        return rerouted
+    return candidate
+
+
+def _fold_repeats(
+    *sections: list[scoring.Candidate],
+) -> tuple[list[scoring.Candidate], list[scoring.Candidate], list[scoring.Candidate], list[str]]:
+    """Drop any entry whose job link already appeared earlier in the same digest.
+
+    Takes (instant, digest, recap). Returns them filtered, plus the global_ids of folded
+    NEW-section entries so the caller can still mark them delivered.
+    """
+    seen: set[str] = set()
+    folded: list[str] = []
+    out: list[list[scoring.Candidate]] = []
+    for index, section in enumerate(sections):
+        kept = []
+        for c in section:
+            key = url_identity(c.posting.apply_url)
+            if key and key in seen:
+                if index < 2:
+                    folded.append(c.global_id)
+                continue
+            if key:
+                seen.add(key)
+            kept.append(c)
+        out.append(kept)
+    return out[0], out[1], out[2], folded
 
 
 def _analyze(conn: sqlite3.Connection, posting: Posting, cfg) -> Analysis:

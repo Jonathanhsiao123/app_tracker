@@ -149,8 +149,83 @@ FUNCTION_TERMS: dict[Function, list[str]] = {
             "frontend", "front-end", "full stack", "full-stack", "platform engineer",
             "infrastructure engineer", "software development"],
 }
+# Words that identify a function in a TITLE but are far too common in a body to count
+# there: "Software Engineering Intern" is a SWE req, while a body saying "software" or
+# "AI" three times says nothing. Measured on the 2026-09-20 ledger, 1,652 of 3,691 live
+# new-grad/intern postings (45%) matched no function at all, mostly curated-repo rows with
+# no body and titles like "Software Engineering Intern", "Technology Developer Intern",
+# "Flight Software Intern" or "Electrical Engineering Co-op" - all of which ended up under
+# "unclassified" at the bottom of the digest.
+FUNCTION_TITLE_TERMS: dict[Function, list[str]] = {
+    "mle": ["ai", "ml", "ai/ml", "artificial intelligence", "applied scientist",
+            "generative ai", "genai", "perception", "applied ai"],
+    "systems": ["flight software", "avionics", "gpu", "compiler", "compilers",
+                "operating systems", "systems software", "silicon", "asic", "vlsi",
+                "autonomy", "simulation", "high performance computing", "hpc",
+                "systems engineer", "systems engineering", "rtl"],
+    "security": ["cyber", "cybersecurity", "cyber security", "red team", "soc analyst"],
+    "research": ["research", "researcher"],
+    "data": ["data", "business intelligence", "data analyst", "data analytics"],
+    "quant": ["quantitative developer", "quantitative researcher"],
+    "swe": ["software", "developer", "programmer", "programming", "web", "mobile", "ios",
+            "android", "cloud", "devops", "site reliability", "sre", "c++", "java",
+            "python", "computer science", "technology developer", "technology analyst",
+            "application developer", "applications engineer", "fullstack", "infrastructure",
+            "platform", "game", "engineering productivity", "solutions engineer",
+            "forward deployed", "react", "react native", "frontend", "technology",
+            "information technology", "it", "technical support", "support engineer",
+            "user experience engineer", "product engineering", "associate engineer"],
+    "hardware": ["electrical", "mechanical", "hardware engineer", "hardware engineering",
+                 "manufacturing", "civil", "chemical", "aerospace", "structural",
+                 "test engineer", "controls", "rf", "power", "thermal", "materials",
+                 "industrial engineering", "process engineer", "quality engineer",
+                 "technician", "mechatronics", "propulsion", "construction", "layout",
+                 "electronics", "pcb", "circuit", "optical", "nuclear", "analog",
+                 "physical design", "design engineer", "device", "plumbing",
+                 "environmental", "subsurface", "reliability engineering", "audio"],
+    "product": ["product manager", "product management", "product development",
+                "product specialist", "product intern", "product analyst",
+                "product marketing", "program manager", "program management",
+                "project manager", "project management", "ux", "ui/ux", "designer",
+                "product design", "technical program", "pm", "developer relations",
+                "developer advocate"],
+    "business": ["business", "finance", "financial", "accounting", "accountant",
+                 "marketing", "sales", "operations", "strategy", "consulting", "consultant",
+                 "audit", "tax", "investment", "banking", "risk", "supply chain", "legal",
+                 "human resources", "recruiting", "estimating", "procurement", "analyst",
+                 "recruiter", "recruitment", "hr", "asset management", "events", "gtm",
+                 "leadership development", "customer", "strategist", "personnel security"],
+}
+
+# The role noun outranks the domain word. "Strategic Finance, AI & Business Partnership",
+# "Product Designer, AI Native" and "Personnel Security Specialist" each matched a
+# technical label from a modifier ("AI", "Security"), and since a posting is grouped under
+# its highest-ranked label they were listed at the TOP of the digest, as ML and security
+# roles. So when a title carries one of these decisive non-software role words and no
+# engineering role noun, only the non-software labels are kept. Generic words that also
+# name technical roles ("analyst", "business" as in Business Intelligence, "operations")
+# are deliberately absent.
+_DECISIVE_NON_TECH_RE = _boundary([
+    "finance", "financial", "accounting", "accountant", "marketing", "sales", "strategy",
+    "strategist", "consulting", "consultant", "audit", "tax", "investment", "banking",
+    "legal", "human resources", "recruiting", "recruiter", "recruitment", "hr",
+    "procurement", "gtm", "personnel security", "product manager", "product management",
+    "program manager", "project manager", "project management", "designer", "ux", "pm",
+    "developer relations", "developer advocate", "product marketing", "technical program",
+])
+_TECH_ROLE_NOUN_RE = re.compile(
+    r"(?<!\w)(?:engineer\w*|developer(?!\s+(?:relations|advocate))|scientist|programmer"
+    r"|researcher|swe|sde|mle)(?!\w)",
+    re.IGNORECASE,
+)
+_NON_SOFTWARE: frozenset[str] = frozenset({"hardware", "product", "business"})
+
 _FUNCTION_RES: dict[Function, re.Pattern[str]] = {
     fn: _boundary(terms) for fn, terms in FUNCTION_TERMS.items()
+}
+_FUNCTION_TITLE_RES: dict[Function, re.Pattern[str]] = {
+    fn: _boundary(FUNCTION_TERMS.get(fn, []) + terms)
+    for fn, terms in FUNCTION_TITLE_TERMS.items()
 }
 
 # A title hit is worth this many body hits. Almost every SWE posting says "machine
@@ -158,22 +233,53 @@ _FUNCTION_RES: dict[Function, re.Pattern[str]] = {
 TITLE_WEIGHT = 5
 FUNCTION_THRESHOLD = 3
 
+# Tie-break between functions with equal title scores: technical first, so "Software
+# Engineer - Business Applications" leads with swe and "Data Analyst" with data, not
+# business. Grouping uses the profile's rank, not this; this only orders the list.
+FUNCTION_PRECEDENCE: tuple[Function, ...] = (
+    "mle", "security", "systems", "swe", "data", "quant", "research",
+    "hardware", "product", "business",
+)
+
 
 def classify_function(title: str, description_text: str) -> list[Function]:
-    """Function labels from title plus description weighting (spec 7).
+    """Function labels, TITLE FIRST (spec 7).
+
+    When the title names a function, the title decides and the body only breaks ties.
+    Previously title and body were summed, so a generic SWE req whose body said "security"
+    three times was filed as [security, swe] and grouped under security - ahead of swe in
+    the usual priority order - which is a large part of why the digest's grouping read as
+    wrong. The body alone is consulted only when the title names nothing at all.
 
     Returns [] rather than defaulting to ["swe"] when nothing matches; an empty function
     list is honest and still alerts.
     """
     title = title or ""
     body = (description_text or "")[:4000]
-    scores: dict[Function, int] = {}
+    body_scores: dict[Function, int] = {
+        fn: n for fn, pattern in _FUNCTION_RES.items() if (n := len(pattern.findall(body)))
+    }
+    title_scores: dict[Function, int] = {}
+    for fn, pattern in _FUNCTION_TITLE_RES.items():
+        hits = len(pattern.findall(title))
+        if hits:
+            title_scores[fn] = TITLE_WEIGHT * hits
     for fn, pattern in _FUNCTION_RES.items():
-        score = TITLE_WEIGHT * len(pattern.findall(title)) + len(pattern.findall(body))
-        if score:
-            scores[fn] = score
-    return [fn for fn, score in sorted(scores.items(), key=lambda kv: -kv[1])
-            if score >= FUNCTION_THRESHOLD]
+        if fn not in _FUNCTION_TITLE_RES and (hits := len(pattern.findall(title))):
+            title_scores[fn] = TITLE_WEIGHT * hits
+    if _DECISIVE_NON_TECH_RE.search(title) and not _TECH_ROLE_NOUN_RE.search(title):
+        non_software = {fn: s for fn, s in title_scores.items() if fn in _NON_SOFTWARE}
+        title_scores = non_software or title_scores
+
+    def order(fn: Function, primary: int) -> tuple[int, int, int]:
+        return (-primary, -body_scores.get(fn, 0), FUNCTION_PRECEDENCE.index(fn))
+
+    if title_scores:
+        return sorted(title_scores, key=lambda fn: order(fn, title_scores[fn]))
+    return sorted(
+        (fn for fn, n in body_scores.items() if n >= FUNCTION_THRESHOLD),
+        key=lambda fn: order(fn, body_scores[fn]),
+    )
 
 
 _DEGREE_GATE_RE = re.compile(

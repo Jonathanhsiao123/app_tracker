@@ -109,6 +109,27 @@ Leave all six unset for ntfy-only operation. The SMTP password is read only from
 Actions secret and is never written to the ledger or logs. For local runs, set the same
 environment variables in the shell before `jobmon run`.
 
+### Clearance screening (LLM, optional)
+
+With `screening.enabled: true` in a profile, Claude Haiku reads every posting before it is
+sent and drops the ones that require a security clearance or US citizenship / US-person
+status. The regex filter misses these when the requirement is phrased loosely or sits in
+the last paragraph. It reads the whole description, or for curated-list rows (which have no
+body) the apply page itself, and both the NEW and STILL OPEN sections are screened.
+
+* **Turn on:** set the `ANTHROPIC_API_KEY` repository secret, and `screening.enabled: true`
+  in the profile (on in `jonathan.yaml`).
+* **Turn off:** `screening.enabled: false`, or for no-commit control set the repository
+  *variable* `JOBMON_LLM_SCREEN=off`.
+* **Fails open:** a missing key, an outage or a spent `max_calls_per_run` budget delivers
+  postings under the regex rules alone and says so in the digest footer. The run is never
+  failed.
+* **Cost:** each verdict is cached in `state/screened.jsonl`, so a posting is paid for once.
+  At Haiku rates that is well under a dollar a month at this project's volume.
+* **Auditing:** a dropped posting shows its quoted evidence in `jobmon list --all`.
+
+When a posting matches no category from its title, the screen's category is used to file it.
+
 ## How much reaches your phone
 
 Each sweep sends one digest, subject `Jobmon Opening Workflow`, in two sections:

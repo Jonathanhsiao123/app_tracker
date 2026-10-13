@@ -377,3 +377,85 @@ def test_mark_alerted_timestamp_is_set_after_delivery(conn, wire):
     assert when is not None
     assert when.tzinfo is not None
     assert when <= datetime.now(UTC)
+
+
+# --- copies stay folded across ledger rebuilds; the clearance screen ---------------------
+
+def test_copies_stay_folded_across_ledger_rebuilds(tmp_path, wire):
+    """The bug behind "the same job and link, twice": the `duplicates` table lives in the
+    derived cache and is not in the ledger, so a copy folded on the run that inserted it
+    came back on the next run as an ordinary undelivered posting. Here the copy also
+    defeats both old keys - different company spelling, different title, a tracking
+    query string - and only the link ties it to the original."""
+    gh = greenhouse_job(8204086123)
+    copy = github_repo_job(gh["absolute_url"] + "?utm_source=Simplify&ref=Simplify",
+                           company="Acme Industries", title="SWE - New Grad (2027)",
+                           locations=("New York, NY",))
+    sent = wire(FakeAdapter([gh, copy]))
+    state = tmp_path / "state"
+    kwargs = {"ledger_path": state, "health_path": state / "health.json"}
+
+    first = runner.run_scheduled(**kwargs)
+    assert sent["digests"] == [["greenhouse:acme:8204086123"]]
+    assert first.alerted == 1
+
+    wire(FakeAdapter([gh, copy]))
+    second = runner.run_scheduled(**kwargs)
+    assert second.alerted == 0, "the copy must not arrive an hour later as a new posting"
+
+
+def _long(text):
+    return "<p>" + "We build reliable distributed systems for customers. " * 12 + text + "</p>"
+
+
+def _screening_profile(**kw):
+    from jobmon.profiles import Profile, Screening
+    return Profile(name="p", screening=Screening(enabled=True, fetch_pages=False, **kw))
+
+
+def test_screen_drops_a_clearance_req_the_regex_misses(conn, wire, monkeypatch):
+    """The requirement in the last sentence, phrased so `CLEARANCE_PATTERNS` misses it."""
+    from jobmon.analyze import screen
+
+    def fake_ask(self, posting, text, basis):
+        if "clearance" in text:
+            return "clearance", "Must be able to obtain a Secret security clearance.", "swe"
+        return "none", "", "swe"
+
+    monkeypatch.setattr(screen.Screener, "_ask", fake_ask)
+    sent = wire(FakeAdapter([
+        greenhouse_job(1, title="SWE New Grad A", body=_long("Apply today.")),
+        greenhouse_job(2, title="SWE New Grad B",
+                       body=_long("Must be able to obtain a Secret security clearance.")),
+    ]))
+    cache = {}
+    result = runner.run(conn, profile_list=[_screening_profile()], screen_cache=cache)
+    assert sent["digests"] == [["greenhouse:acme:1"]]
+    assert result.profiles["p"].screened_out == 1
+    assert cache["greenhouse:acme:2"].verdict == "clearance"
+
+
+def test_screen_fails_open_when_the_api_is_unavailable(conn, wire, monkeypatch):
+    """No key or an outage must never empty the digest: deliver under the regex rules."""
+    from jobmon.analyze import screen
+
+    def broken(self, posting, text, basis):
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(screen.Screener, "_ask", broken)
+    sent = wire(FakeAdapter([greenhouse_job(1, title="SWE New Grad A", body=_long("x"))]))
+    result = runner.run(conn, profile_list=[_screening_profile()], screen_cache={})
+    assert sent["digests"] == [["greenhouse:acme:1"]]
+    assert result.profiles["p"].screened_out == 0
+
+
+def test_screen_toggle_off_makes_no_calls(conn, wire, monkeypatch):
+    from jobmon.analyze import screen
+    from jobmon.profiles import Profile
+
+    monkeypatch.setattr(screen.Screener, "_ask", lambda *a: pytest.fail("called"))
+    wire(FakeAdapter([greenhouse_job(1, body=_long("clearance"))]))
+    runner.run(conn, profile_list=[Profile(name="p")], screen_cache={})
+    monkeypatch.setenv("JOBMON_LLM_SCREEN", "off")
+    wire(FakeAdapter([greenhouse_job(2, body=_long("clearance"))]))
+    runner.run(conn, profile_list=[_screening_profile()], screen_cache={})

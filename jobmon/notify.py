@@ -291,6 +291,25 @@ def _group_by_category(candidates: list) -> dict[str, list]:
     return groups
 
 
+CATEGORY_LABELS = {
+    "swe": "Software Engineering",
+    "mle": "Machine Learning / AI",
+    "systems": "Systems / Embedded",
+    "security": "Security",
+    "research": "Research",
+    "data": "Data",
+    "quant": "Quant",
+    "hardware": "Hardware / Other Engineering",
+    "product": "Product / Program",
+    "business": "Business / Operations",
+    "unclassified": "Other (role not identified)",
+}
+
+
+def _category_label(category: str) -> str:
+    return CATEGORY_LABELS.get(category, category.title())
+
+
 def _recap_title(profile: Profile, recap: list, recap_pool: int) -> str:
     days = profile.limits.recap_days
     window = "today" if days <= 1 else f"last {days} days"
@@ -317,13 +336,15 @@ def _digest_text(candidates: list, recap: list, recap_pool: int, profile: Profil
     blocks: list[str] = []
     if candidates:
         blocks.append(_heading(f"NEW THIS SWEEP ({len(candidates)})"))
-        blocks.append("\n\n---\n\n".join(
-            format_alert(c.posting, c.analysis, profile, c.score) for c in candidates
-        ))
+        for category, group in _group_by_category(candidates).items():
+            blocks.append(f"{_category_label(category).upper()} ({len(group)})")
+            blocks.append("\n\n---\n\n".join(
+                format_alert(c.posting, c.analysis, profile, c.score) for c in group
+            ))
     if recap:
         blocks.append(_heading(_recap_title(profile, recap, recap_pool)))
         for category, group in _group_by_category(recap).items():
-            lines = [f"{category.upper()} ({len(group)})"]
+            lines = [f"{_category_label(category).upper()} ({len(group)})"]
             for candidate in group:
                 what, where = _one_line(candidate)
                 lines.append("  " + what)
@@ -342,14 +363,24 @@ def _digest_html(
         "<h1>Jobmon Opening Workflow</h1>",
     ]
     if candidates:
+        # Grouped by the same Phase X category, in the same order, as the recap below.
+        # This used to group by the raw function list ("Swe, Mle", "Security, Swe"), so
+        # the two halves of one mail were organized two different ways.
         parts.append(f"<h2>New this sweep ({len(candidates)})</h2>")
-        parts.append(format_digest_html(
-            [(c.posting, c.analysis) for c in candidates], heading_level=3
-        ))
+        for category, group in _group_by_category(candidates).items():
+            parts.append(f"<h3>{escape(_category_label(category))} ({len(group)})</h3><ul>")
+            for candidate in group:
+                what, where = _one_line(candidate)
+                url = escape(candidate.posting.apply_url, quote=True)
+                parts.append(
+                    f'<li><a href="{url}"><strong>{escape(what)}</strong></a><br>'
+                    f'<small style="color:#555">{escape(where)}</small></li>'
+                )
+            parts.append("</ul>")
     if recap:
         parts.append(f"<h2>{escape(_recap_title(profile, recap, recap_pool))}</h2>")
         for category, group in _group_by_category(recap).items():
-            parts.append(f"<h3>{escape(category.title())} ({len(group)})</h3><ul>")
+            parts.append(f"<h3>{escape(_category_label(category))} ({len(group)})</h3><ul>")
             for candidate in group:
                 what, where = _one_line(candidate)
                 url = escape(candidate.posting.apply_url, quote=True)

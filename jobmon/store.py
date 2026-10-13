@@ -20,7 +20,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .models import AdapterHealth, Analysis, ApplicationStatus, Posting
-from .normalize import ats_job_token, normalize_company, normalize_title
+from .normalize import (
+    ats_job_token,
+    company_root,
+    location_city,
+    normalize_company,
+    normalize_title,
+    url_identity,
+)
 
 DB_PATH = Path("jobmon.db")
 
@@ -264,8 +271,130 @@ def upsert_posting(
     return "new"
 
 
+def reconcile_duplicates(conn: sqlite3.Connection, run_id: int) -> int:
+    """Fold every copy of the same job seen THIS run into one canonical posting.
+
+    Returns the number of `duplicates` rows written; a second pass over the same run writes
+    none.
+
+    WHY THIS RUNS EVERY SWEEP, FROM SCRATCH. The `duplicates` table lives in the derived
+    SQLite cache, and the ledger does not carry it - so a copy that `upsert_posting` marked
+    on the run that inserted it was a duplicate for that one run only, and from the next
+    rebuild on it was an ordinary posting again: in the recap every hour, and in the NEW
+    section whenever its own copy had not been delivered. That, plus three identities the
+    old passes could not see, is how the digest carried the same job and link twice:
+
+      * same link, different company spelling - "Anduril" vs "Anduril Industries" defeated
+        the (normalized_company, ats_token) key;
+      * same link, no recognisable req id - applytojob, careerpuck, Workday "_8550"; only
+        the link itself ties them, once tracking parameters are stripped;
+      * same title and city, location spelled differently - "Quincy, MA" vs "Quincy,
+        Massachusetts, United States" defeated the exact first_location key.
+
+    Every one of those keys is recomputed here from fields the ledger DOES persist (company,
+    title, first location, apply URL), so the answer is the same on every run.
+
+    Keys, unioned (any match joins two postings into one group):
+      url    - `url_identity(apply_url)`: the same link to one job
+      ats    - (company_root, ATS req id)
+      fuzzy  - (company_root, normalized_title, city), but never across two DIFFERENT req
+               ids: those are two reqs that happen to share a title, e.g. one per team.
+
+    CANONICAL: a copy with a description body beats a bodyless curated-repo row (the body
+    is what eligibility, clearance screening and keywords read), then oldest
+    `first_seen_at`, then `global_id`. Stable for as long as the group's members stay live.
+    """
+    rows = conn.execute(
+        """SELECT global_id, source, company, normalized_title, first_location, apply_url,
+                  first_seen_at
+           FROM postings WHERE last_seen_run = ?""",
+        (run_id,),
+    ).fetchall()
+    if not rows:
+        return 0
+
+    parent: dict[str, str] = {r["global_id"]: r["global_id"] for r in rows}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    by_key: dict[tuple, list[str]] = {}
+    fuzzy: dict[tuple, list[tuple[str, str | None]]] = {}
+    for r in rows:
+        gid, root = r["global_id"], company_root(r["company"])
+        token = ats_job_token(r["apply_url"])
+        ident = url_identity(r["apply_url"])
+        if ident:
+            by_key.setdefault(("url", ident), []).append(gid)
+        if token and root:
+            by_key.setdefault(("ats", root, token), []).append(gid)
+        if root and r["normalized_title"]:
+            key = (root, r["normalized_title"], location_city(r["first_location"]))
+            fuzzy.setdefault(key, []).append((gid, token))
+
+    for members in by_key.values():
+        for gid in members[1:]:
+            union(members[0], gid)
+    for members in fuzzy.values():
+        if len(members) < 2:
+            continue
+        tokens = {t for _, t in members if t}
+        if len(tokens) > 1:
+            continue  # two distinct reqs under one title - not the same job
+        for gid, _ in members[1:]:
+            union(members[0][0], gid)
+
+    info = {r["global_id"]: r for r in rows}
+    groups: dict[str, list[str]] = {}
+    for gid in parent:
+        groups.setdefault(find(gid), []).append(gid)
+
+    desired: dict[str, str] = {}  # duplicate -> canonical
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda g: (
+            info[g]["source"] == "github_repo", info[g]["first_seen_at"] or "", g,
+        ))
+        for gid in members[1:]:
+            desired[gid] = members[0]
+
+    # This pass is the single authority over pairs where BOTH ends are live this run. Rows
+    # pointing at a posting not seen this run (a repost of a closed req) are left alone.
+    live = set(info)
+    existing = conn.execute("SELECT global_id, matched_global_id FROM duplicates").fetchall()
+    for row in existing:
+        gid, matched = row["global_id"], row["matched_global_id"]
+        if gid in live and matched in live and desired.get(gid) != matched:
+            conn.execute(
+                "DELETE FROM duplicates WHERE global_id = ? AND matched_global_id = ?",
+                (gid, matched),
+            )
+    written = 0
+    for gid, canonical in desired.items():
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO duplicates
+                   (global_id, matched_global_id, matched_on, seen_at)
+               VALUES (?,?,?,?)""",
+            (gid, canonical, "sweep", info[gid]["first_seen_at"]),
+        )
+        written += cursor.rowcount or 0
+    conn.commit()
+    return written
+
+
 def dedup_by_ats_token(conn: sqlite3.Connection, run_id: int) -> int:
-    """Reconcile same-req duplicates across everything THIS run saw. Returns rows written.
+    """Superseded by `reconcile_duplicates`, which includes this key; kept for callers.
+
+    Reconcile same-req duplicates across everything THIS run saw. Returns rows written.
 
     `upsert_posting` can only dedup a posting on the run that first inserts it - after that
     it takes the "seen before" branch and never consults a finder again. So the exact-id
@@ -423,8 +552,13 @@ def unalerted_postings(
            WHERE p.last_seen_run = ? AND d.global_id IS NULL
              AND NOT EXISTS (SELECT 1 FROM alerts a
                              WHERE a.global_id = p.global_id AND a.profile = ?)
+             -- A copy of this job already went out under another global_id (before the
+             -- sweep picked this one as canonical). Same job, same link: do not send twice.
+             AND NOT EXISTS (SELECT 1 FROM duplicates d2
+                             JOIN alerts a2 ON a2.global_id = d2.global_id
+                             WHERE d2.matched_global_id = p.global_id AND a2.profile = ?)
            ORDER BY p.first_seen_at""",
-        (run_id, profile),
+        (run_id, profile, profile),
     ).fetchall()
     return [_row_to_posting(r) for r in rows]
 
@@ -572,9 +706,21 @@ def reposted_ids(conn: sqlite3.Connection, minimum: int = 1) -> set[str]:
     }
 
 
-def applied_ids(conn: sqlite3.Connection) -> set[str]:
-    """Postings you have recorded an application against. `suppress_if_applied` (T8.8)."""
-    return {r["global_id"] for r in conn.execute("SELECT global_id FROM applications")}
+def applied_ids(conn: sqlite3.Connection, include_copies: bool = False) -> set[str]:
+    """Postings you have recorded an application against. `suppress_if_applied` (T8.8).
+
+    `include_copies` adds every other copy of the same job, for SUPPRESSION: applying under
+    the curated-repo copy's id must also retire the ATS copy the sweep later picked as
+    canonical, and vice versa. Off for counting - `audit` and `funnel` count applications
+    1:1 against postings.
+    """
+    applied = {r["global_id"] for r in conn.execute("SELECT global_id FROM applications")}
+    if not applied or not include_copies:
+        return applied
+    for row in conn.execute("SELECT global_id, matched_global_id FROM duplicates"):
+        if row["global_id"] in applied or row["matched_global_id"] in applied:
+            applied.update((row["global_id"], row["matched_global_id"]))
+    return applied
 
 
 # --- analysis -----------------------------------------------------------------------

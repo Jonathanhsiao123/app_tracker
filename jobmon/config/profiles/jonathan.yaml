@@ -34,11 +34,33 @@ roles:
   role_class: [new_grad, internship]
   on_unclear_role: digest          # was: alert. This alone is a large cut
   priorities:                      # see Phase X. Reorder these lines to re-rank.
-    order: [mle, security, systems, swe, data]
+    # The last three are the non-software roles that used to sit under "unclassified".
+    # Listed so they are labeled and sorted to the bottom; move any of them to `never`
+    # to stop receiving that kind of role at all.
+    order: [mle, security, systems, swe, data, hardware, product, business]
     never: [quant, sdet]
     sort_by: priority              # priority | score | date | company
   degree_gated: digest             # MS/PhD required
   max_yoe: 2
+
+# --- LLM clearance screen ---------------------------------------------------------
+# A cheap model (Claude Haiku) reads the WHOLE posting - or the apply page, for curated-list
+# rows that come without one - before it is sent, and drops anything requiring a security
+# clearance or US citizenship / US-person status, including when that requirement sits in
+# the last paragraph. Needs the ANTHROPIC_API_KEY repository secret.
+#
+# THE TOGGLE: `enabled`. Set false to go back to the regex filter alone. To switch it off
+# for one run without a commit, set the env var JOBMON_LLM_SCREEN=off.
+#
+# Fails open: no key, an API outage or a spent budget sends postings unscreened (regex rules
+# still apply) and says so in the digest footer. Verdicts are cached in
+# state/screened.jsonl, so each posting costs one call, once - about $0.0005 on Haiku.
+screening:
+  enabled: true
+  model: claude-haiku-5-5
+  on_unclear: keep                 # keep | suppress. `unclear` = model had only a title
+  fetch_pages: true
+  max_calls_per_run: 300
 
 locations:
   allow: [remote, "United States"]

@@ -74,10 +74,14 @@ _AGE_DAYS = re.compile(r"^(\d+)\s*d$", re.IGNORECASE)
 # with no separator at all ("Chicago, ILNew York, NY"). Split on the tag first, here, then
 # clean each fragment.
 _BR_SPLIT = re.compile(r"</?br\s*/?>", re.IGNORECASE)
+# Long lists are collapsed as "<details><summary>4 locations</summary>Palo Alto, CA</br>...",
+# and the summary label used to glue onto the first city: "4 locationsPalo Alto, CA".
+_SUMMARY = re.compile(r"<summary>.*?</summary>", re.IGNORECASE | re.DOTALL)
 
 
 def _split_locations(raw_cell: str) -> list[str]:
-    return [t for part in _BR_SPLIT.split(raw_cell) if (t := bc.cell_text(part))]
+    cell = _SUMMARY.sub("", raw_cell)
+    return [t for part in _BR_SPLIT.split(cell) if (t := bc.cell_text(part))]
 
 
 def fetch(client: httpx.Client, companies: dict[str, Any] | None = None) -> Iterator[dict[str, Any]]:

@@ -17,7 +17,13 @@ RemoteType = Literal["remote", "hybrid", "onsite"]
 RoleClass = Literal["new_grad", "internship", "experienced", "unclear"]
 Eligibility = Literal["blocked", "likely_ok", "unknown"]
 Variant = Literal["generalist", "mle", "systems", "security"]
-Function = Literal["swe", "mle", "systems", "security", "research", "data", "quant"]
+# `hardware`, `product` and `business` name the non-software roles that used to land in
+# "unclassified" - electrical/mechanical engineering, product/program management, finance
+# and operations - so they are grouped and ranked as what they are.
+Function = Literal[
+    "swe", "mle", "systems", "security", "research", "data", "quant",
+    "hardware", "product", "business",
+]
 ApplicationStatus = Literal["applied", "screen", "reject", "onsite", "offer"]
 
 # Addendum 4. How often an employer has actually filed for sponsorship, from DOL LCA

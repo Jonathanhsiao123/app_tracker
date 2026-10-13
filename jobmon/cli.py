@@ -319,6 +319,18 @@ def cmd_list(args: argparse.Namespace) -> int:
                 for posting, analysis in rows
                 if analysis is not None
             ]
+            if profile.screening.enabled:
+                # CACHED verdicts only - `ensure` is never called, so this stays a
+                # zero-network command. A dropped posting shows the quoted evidence.
+                from .analyze import screen
+
+                cached = screen.Screener(screen.load_cache(ledger.STATE_DIR))
+                sink = runner.ProfileResult(profile=profile.name)
+                candidates = [
+                    c if c.route == "silent"
+                    else runner._apply_screen(c, profile, cached, tier, applied, sink)
+                    for c in candidates
+                ]
             if not args.show_all:
                 candidates = [c for c in candidates if c.route != "silent"]
             group = None

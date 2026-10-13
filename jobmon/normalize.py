@@ -408,6 +408,102 @@ _ATS_TOKEN_PATTERNS = (
 )
 
 
+# --- cross-source identity, beyond the req id ------------------------------------------
+#
+# Measured on the 2026-09-20 ledger, 120 live postings shared an apply link with another
+# live posting once scheme and trailing slash were ignored, and 421 once tracking query
+# strings were too - "http://aerotech.applytojob.com/apply/OFIYSpO0HW/..." from one curated
+# list and the same URL plus "?utm_source=Simplify&ref=Simplify" from another. None of
+# those carried a token `ats_job_token` recognises, so only the exact link can tie them.
+
+# Query parameters that say where the click came from, never which job it is.
+_TRACKING_PARAMS = re.compile(
+    r"^(?:utm_\w+|ref|refs|source|src|gh_src|lever-source|lever-origin|t|from|"
+    r"trk|trackingid|campaign|medium|fbclid|gclid|mc_cid|mc_eid)$",
+    re.IGNORECASE,
+)
+# A path segment that names one job rather than a careers landing page: it carries a digit
+# and is long enough not to be a year or a page number.
+_SPECIFIC_SEGMENT = re.compile(r"(?=[^/]*\d)[^/]{5,}")
+_YEAR_ONLY = re.compile(r"^(?:19|20)\d{2}$")
+# A random mixed-case id with no digit in it, e.g. applytojob's "prjzDfwzEE".
+_OPAQUE_ID = re.compile(r"(?=[A-Za-z]*[a-z])(?=[A-Za-z]*[A-Z])[A-Za-z]{8,40}")
+
+
+def canonical_url(url: str | None) -> str | None:
+    """The apply URL with everything that varies by referrer removed.
+
+    Lowercases scheme and host, drops `www.`, folds http into https, drops the fragment,
+    a trailing slash and tracking query parameters, and sorts what query remains. Path case
+    is kept: some ATSes put a case-sensitive id there (applytojob's "OFIYSpO0HW").
+    """
+    if not url:
+        return None
+    from urllib.parse import parse_qsl, urlencode, urlsplit
+
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    if not host:
+        return None
+    path = parts.path.rstrip("/")
+    query = sorted(
+        (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if not _TRACKING_PARAMS.match(k)
+    )
+    return f"https://{host}{path}" + (f"?{urlencode(query)}" if query else "")
+
+
+def url_identity(url: str | None) -> str | None:
+    """`canonical_url`, but only when the link points at ONE job.
+
+    A curated-repo row sometimes links a company's generic careers page, and several
+    different roles then share that URL. Treating it as an identity would fold distinct
+    jobs together, so a link qualifies only when it carries an ATS req id, or a path
+    segment that looks like an id (has a digit, five or more characters, not a bare year),
+    or a random mixed-case id, or a query string that survived tracking-param removal.
+    """
+    canon = canonical_url(url)
+    if canon is None:
+        return None
+    if ats_job_token(url):
+        return canon
+    path, _, query = canon.partition("?")
+    segments = path.split("/")[3:]  # after "https:", "", host
+    if query:
+        return canon
+    if any(
+        (_SPECIFIC_SEGMENT.fullmatch(s) and not _YEAR_ONLY.match(s)) or _OPAQUE_ID.fullmatch(s)
+        for s in segments
+    ):
+        return canon
+    return None
+
+
+def company_root(name_: str) -> str:
+    """First token of `normalize_company`: "Anduril Industries" and "Anduril" -> "anduril".
+
+    Used only alongside a second, exact key (a req id, or a title + city), never alone -
+    on its own it would merge "General Motors" with "General Dynamics".
+    """
+    tokens = normalize_company(name_).split()
+    return tokens[0] if tokens else ""
+
+
+def location_city(location: str | None) -> str:
+    """The city part of a location string, for the fuzzy dedup key.
+
+    The same req is "Quincy, Massachusetts, United States" on Greenhouse and "Quincy, MA"
+    on a curated list; both are "quincy" here. "Atlanta, GA +8" -> "atlanta".
+    """
+    if not location:
+        return ""
+    head = re.split(r"[,;|•·+(]", location, maxsplit=1)[0]
+    return " ".join(_PUNCT.sub(" ", head).lower().split())
+
+
 def ats_job_token(url: str | None) -> str | None:
     """The ATS's own req id from an apply URL, lowercased. None when there isn't one.
 

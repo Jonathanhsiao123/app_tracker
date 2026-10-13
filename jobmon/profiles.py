@@ -199,6 +199,24 @@ class Routing:
 
 
 @dataclass(slots=True)
+class Screening:
+    """The LLM clearance screen (`analyze/screen.py`). OFF by default, like every other
+    addition to this file: installing the code changes nothing until a profile asks.
+
+    `enabled: true` has a cheap model read each posting about to be sent and drops the
+    ones that require a security clearance or US citizenship. It fails open - no API key
+    or an outage means the posting goes out under the regex rules, with a footer note.
+    """
+
+    enabled: bool = False
+    model: str = "claude-haiku-5-5"
+    # A posting the model could not judge (title-only row, page did not load).
+    on_unclear: str = "keep"          # keep | suppress
+    fetch_pages: bool = True          # read the apply page when a posting has no body
+    max_calls_per_run: int = 300      # cost ceiling; verdicts are cached, so mostly idle
+
+
+@dataclass(slots=True)
 class Scoring:
     """Addendum 5's formula, term by term. Defaults sum to 1.0 so that `min_score: 0.55`
     and the 0.8 instant threshold mean what they look like they mean."""
@@ -228,6 +246,7 @@ class Profile:
     denylist: Denylist = field(default_factory=Denylist)
     routing: Routing = field(default_factory=Routing)
     scoring: Scoring = field(default_factory=Scoring)
+    screening: Screening = field(default_factory=Screening)
     boosted: list[str] = field(default_factory=list)  # from the feedback store
     path: Path | None = None
 
@@ -444,10 +463,29 @@ def _parse_scoring(raw: dict[str, Any], where: str) -> Scoring:
     return out
 
 
+def _parse_screening(raw: dict[str, Any], where: str) -> Screening:
+    known = ("enabled", "model", "on_unclear", "fetch_pages", "max_calls_per_run")
+    _reject_unknown(raw, known, where)
+    out = Screening()
+    for key in ("enabled", "fetch_pages"):
+        if key in raw:
+            setattr(out, key, _bool(raw[key], f"{where}.{key}"))
+    if "model" in raw:
+        if not isinstance(raw["model"], str) or not raw["model"].strip():
+            raise ProfileError(f"{where}.model: must be a model id string, got {raw['model']!r}")
+        out.model = raw["model"].strip()
+    if "on_unclear" in raw:
+        out.on_unclear = _enum(raw["on_unclear"], ("keep", "suppress"), f"{where}.on_unclear")
+    if "max_calls_per_run" in raw:
+        value = _positive_int_or_none(raw["max_calls_per_run"], f"{where}.max_calls_per_run")
+        out.max_calls_per_run = 0 if value is None else value
+    return out
+
+
 # --- loading ---------------------------------------------------------------------------
 
 TOP_LEVEL = ("name", "locale", "eligibility", "roles", "locations", "limits",
-             "denylist", "routing", "scoring")
+             "denylist", "routing", "scoring", "screening")
 
 
 def parse(raw: dict[str, Any] | None, name: str, path: Path | None = None) -> Profile:
@@ -480,6 +518,7 @@ def parse(raw: dict[str, Any] | None, name: str, path: Path | None = None) -> Pr
         denylist=_parse_denylist(_block(raw, "denylist", where), f"{where}.denylist"),
         routing=_parse_routing(_block(raw, "routing", where), f"{where}.routing"),
         scoring=_parse_scoring(_block(raw, "scoring", where), f"{where}.scoring"),
+        screening=_parse_screening(_block(raw, "screening", where), f"{where}.screening"),
         path=path,
     )
 
