@@ -209,7 +209,7 @@ class Screening:
     """
 
     enabled: bool = False
-    model: str = "claude-haiku-5-5"
+    model: str = ""                   # Luminal deployment's model name; "" = LUMINAL_MODEL
     # A posting the model could not judge (title-only row, page did not load).
     on_unclear: str = "keep"          # keep | suppress
     fetch_pages: bool = True          # read the apply page when a posting has no body
@@ -471,9 +471,9 @@ def _parse_screening(raw: dict[str, Any], where: str) -> Screening:
         if key in raw:
             setattr(out, key, _bool(raw[key], f"{where}.{key}"))
     if "model" in raw:
-        if not isinstance(raw["model"], str) or not raw["model"].strip():
-            raise ProfileError(f"{where}.model: must be a model id string, got {raw['model']!r}")
-        out.model = raw["model"].strip()
+        if raw["model"] is not None and not isinstance(raw["model"], str):
+            raise ProfileError(f"{where}.model: must be a model name string, got {raw['model']!r}")
+        out.model = (raw["model"] or "").strip()
     if "on_unclear" in raw:
         out.on_unclear = _enum(raw["on_unclear"], ("keep", "suppress"), f"{where}.on_unclear")
     if "max_calls_per_run" in raw:

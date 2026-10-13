@@ -186,15 +186,50 @@ def test_the_title_decides_over_body_mentions():
 
 # --- the screener -----------------------------------------------------------------------
 
+CONFIGURED = {"model": "test-model", "base_url": "https://luminal.invalid/v1",
+              "api_key": "test-key"}
+
+
+def luminal(handler, **kw) -> screen.Screener:
+    """A screener whose HTTP calls go to `handler(request) -> httpx.Response`."""
+    import httpx
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return screen.Screener({}, llm_http=client, **{**CONFIGURED, **kw})
+
+
+def reply(content: str):
+    import httpx
+    return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+
+def test_screener_sends_an_openai_style_request_and_reads_the_verdict():
+    seen = {}
+
+    def handler(request):
+        import json
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers["authorization"]
+        seen["body"] = json.loads(request.content)
+        return reply('```json\n{"verdict": "clearance", "evidence": "TS/SCI required.", '
+                     '"category": "swe"}\n```')
+
+    s = luminal(handler)
+    s.ensure([posting("x:acme:1", body="We need you. " * 50)])
+    assert seen["url"] == "https://luminal.invalid/v1/chat/completions"
+    assert seen["auth"] == "Bearer test-key"
+    assert seen["body"]["model"] == "test-model"
+    assert s.get("x:acme:1").verdict == "clearance"
+    assert s.get("x:acme:1").evidence == "TS/SCI required."
+
+
 def test_screener_caches_and_respects_its_budget():
     calls = []
 
-    class S(screen.Screener):
-        def _ask(self, p, text, basis):
-            calls.append(p.global_id)
-            return "none", "", "swe"
+    def handler(request):
+        calls.append(1)
+        return reply('{"verdict": "none", "evidence": "", "category": "swe"}')
 
-    s = S({}, max_calls=2)
+    s = luminal(handler, max_calls=2)
     batch = [posting(f"x:acme:{i}") for i in range(3)]
     s.ensure(batch)
     assert len(calls) == 2 and s.unscreened == 1
@@ -203,37 +238,56 @@ def test_screener_caches_and_respects_its_budget():
     assert "budget" in s.note()
 
 
-def test_screener_stops_calling_after_a_non_retryable_error():
+def test_a_wrong_key_stops_calling_for_the_rest_of_the_run():
+    import httpx
     calls = []
 
-    class S(screen.Screener):
-        def _ask(self, p, text, basis):
-            calls.append(1)
-            raise ValueError("bad request")
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(401, json={"error": "bad key"})
 
-    s = S({}, workers=1)
+    s = luminal(handler, workers=1)
     s.ensure([posting(f"x:acme:{i}") for i in range(5)])
     assert len(calls) == 1 and s.unscreened == 5
-    assert "bad request" in s.note()
+    assert "LUMINAL_API_KEY" in s.note()
+
+
+def test_an_unconfigured_screener_makes_no_calls_and_says_why(monkeypatch):
+    for name in ("LUMINAL_BASE_URL", "LUMINAL_API_KEY", "LUMINAL_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    s = screen.Screener({})
+    s.ensure([posting("x:acme:1")])
+    assert s.calls == 0 and s.unscreened == 1
+    assert "not configured" in s.note() and "LUMINAL_BASE_URL" in s.note()
+
+
+def test_an_unusable_reply_leaves_the_posting_unscreened_not_cleared():
+    s = luminal(lambda request: reply("I think this job is probably fine."))
+    s.ensure([posting("x:acme:1")])
+    assert s.get("x:acme:1") is None and s.unscreened == 1
+
+
+@pytest.mark.parametrize("text,expected", [
+    ('{"verdict": "none", "evidence": "", "category": "mle"}', ("none", "", "mle")),
+    ('Sure! {"verdict": "Citizenship", "evidence": "US persons only", "category": "x"}',
+     ("citizenship", "US persons only", "other")),
+    ('{"verdict": "maybe"}', None),
+    ("not json", None),
+])
+def test_parse_reply(text, expected):
+    assert screen.parse_reply(text) == expected
 
 
 def test_a_long_posting_is_sent_with_its_tail_intact():
+    import json
     seen = {}
 
-    class FakeMessages:
-        def parse(self, **kw):
-            seen["prompt"] = kw["messages"][0]["content"]
-
-            class Response:
-                stop_reason = "end_turn"
-                parsed_output = None
-            return Response()
-
-    class FakeClient:
-        messages = FakeMessages()
+    def handler(request):
+        seen["prompt"] = json.loads(request.content)["messages"][1]["content"]
+        return reply('{"verdict": "clearance", "evidence": "", "category": "swe"}')
 
     body = "filler. " * 20_000 + "Requires an active TS/SCI clearance."
-    screen.Screener({}, client=FakeClient()).ensure([posting("x:acme:1", body=body)])
+    luminal(handler).ensure([posting("x:acme:1", body=body)])
     assert seen["prompt"].endswith("Requires an active TS/SCI clearance.\n--- END ---")
 
 
@@ -243,6 +297,21 @@ def test_cache_round_trips(tmp_path):
     assert screen.load_cache(tmp_path)["a:b:1"].verdict == "clearance"
     screen.save_cache(cache, tmp_path, keep=set())
     assert screen.load_cache(tmp_path) == {}
+
+
+def test_env_file_fills_unset_names_only(tmp_path, monkeypatch):
+    from jobmon import cli
+    env = tmp_path / ".env"
+    env.write_text('# c\nLUMINAL_MODEL="m-1"\nLUMINAL_API_KEY=from-file\nLUMINAL_BASE_URL=\n',
+                   encoding="utf-8")
+    monkeypatch.delenv("LUMINAL_MODEL", raising=False)
+    monkeypatch.delenv("LUMINAL_BASE_URL", raising=False)
+    monkeypatch.setenv("LUMINAL_API_KEY", "from-shell")
+    assert cli.load_env_file(env) == ["LUMINAL_MODEL"]
+    import os
+    assert os.environ["LUMINAL_MODEL"] == "m-1"
+    assert os.environ["LUMINAL_API_KEY"] == "from-shell", "a set variable wins over the file"
+    assert "LUMINAL_BASE_URL" not in os.environ, "a blank value sets nothing"
 
 
 def test_profile_screening_block_parses_and_rejects_typos():

@@ -608,8 +608,41 @@ COMMANDS = {
 }
 
 
+# Local settings for runs on your own machine (gitignored; template in `.env.example`).
+# On GitHub Actions the same names come from repository secrets instead.
+ENV_FILE = Path(".env")
+
+
+def load_env_file(path: Path | None = None) -> list[str]:
+    """Read `KEY=value` lines from `.env` into the environment. Returns the keys set.
+
+    A variable that is ALREADY set wins over the file, so an Actions secret or a shell
+    `export` is never overridden by a stale local value. Blank values are skipped, so the
+    unfilled template changes nothing. No dependency: the format is `KEY=value`, `#`
+    comments, optional surrounding quotes - nothing else.
+    """
+    path = path or ENV_FILE
+    if not path.is_file():
+        return []
+    loaded: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. A failed run exits non-zero so the Actions cron surfaces it."""
+    load_env_file()
     # Posting titles now come straight from free-text READMEs (github_repos, build step
     # 7b) and routinely carry emoji ("Engineering Intern \U0001f393"). GitHub Actions'
     # ubuntu runner is UTF-8 by default, but a local Windows console (cp1252) is not, and

@@ -106,26 +106,30 @@ GitHub Actions secrets to enable it:
 `JOBMON_SMTP_USER`, `JOBMON_SMTP_PASSWORD`, `JOBMON_EMAIL_FROM`, and `JOBMON_EMAIL_TO`.
 
 Leave all six unset for ntfy-only operation. The SMTP password is read only from the
-Actions secret and is never written to the ledger or logs. For local runs, set the same
-environment variables in the shell before `jobmon run`.
+Actions secret and is never written to the ledger or logs. For local runs, fill in `.env`
+(gitignored; copy it from `.env.example`, which lists every setting). `jobmon` reads it on
+start, and anything already set in the shell takes precedence.
 
 ### Clearance screening (LLM, optional)
 
-With `screening.enabled: true` in a profile, Claude Haiku reads every posting before it is
-sent and drops the ones that require a security clearance or US citizenship / US-person
-status. The regex filter misses these when the requirement is phrased loosely or sits in
-the last paragraph. It reads the whole description, or for curated-list rows (which have no
-body) the apply page itself, and both the NEW and STILL OPEN sections are screened.
+With `screening.enabled: true` in a profile, a model hosted on Luminal Cloud reads every
+posting before it is sent and drops the ones that require a security clearance or US
+citizenship / US-person status. The regex filter misses these when the requirement is
+phrased loosely or sits in the last paragraph. It reads the whole description, or for
+curated-list rows (which have no body) the apply page itself, and both the NEW and STILL
+OPEN sections are screened. Calls go to an OpenAI-style `/chat/completions` endpoint.
 
-* **Turn on:** set the `ANTHROPIC_API_KEY` repository secret, and `screening.enabled: true`
-  in the profile (on in `jonathan.yaml`).
+* **Turn on:** set the `LUMINAL_API_KEY` and `LUMINAL_BASE_URL` repository secrets (the base
+  URL is everything before `/chat/completions`), put your deployment's model name in
+  `screening.model` (or the repository variable `LUMINAL_MODEL`), and set
+  `screening.enabled: true` (already on in `jonathan.yaml`).
 * **Turn off:** `screening.enabled: false`, or for no-commit control set the repository
   *variable* `JOBMON_LLM_SCREEN=off`.
-* **Fails open:** a missing key, an outage or a spent `max_calls_per_run` budget delivers
-  postings under the regex rules alone and says so in the digest footer. The run is never
-  failed.
-* **Cost:** each verdict is cached in `state/screened.jsonl`, so a posting is paid for once.
-  At Haiku rates that is well under a dollar a month at this project's volume.
+* **Fails open:** any of those unset, a wrong key or model name, an outage, or a spent
+  `max_calls_per_run` budget delivers postings under the regex rules alone and says so in
+  the digest footer. The run is never failed.
+* **Cost:** each verdict is cached in `state/screened.jsonl`, so a posting is paid for once:
+  roughly 30-150 calls a day of ~3k tokens each, drawn from the Luminal account's credit.
 * **Auditing:** a dropped posting shows its quoted evidence in `jobmon list --all`.
 
 When a posting matches no category from its title, the screen's category is used to file it.

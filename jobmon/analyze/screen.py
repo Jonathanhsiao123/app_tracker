@@ -29,6 +29,20 @@ ROBUSTNESS, in order of what matters:
 
 The verdict is objective and shared (one row per posting); what to DO with it is the
 profile's opinion, applied in `runner`.
+
+PROVIDER: Luminal Cloud, through an OpenAI-style `/chat/completions` endpoint, so the
+account's free token credit pays for it. Three settings, none of them in this repo:
+
+    LUMINAL_API_KEY    secret   the API key
+    LUMINAL_BASE_URL   secret   the endpoint base, up to but not including /chat/completions
+    screening.model    profile  the model name of the Luminal deployment (or LUMINAL_MODEL)
+
+Any of them missing fails open, like an outage: postings go out under the regex rules and
+the digest footer says the screen is not configured.
+
+The JSON answer is parsed from the reply text rather than requested with a structured-output
+parameter, because that parameter is not supported uniformly across open-model servers and
+an unsupported one would 400 every call.
 """
 
 from __future__ import annotations
@@ -36,12 +50,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 import httpx
 
@@ -53,8 +68,10 @@ log = logging.getLogger(__name__)
 # Bump when the prompt or the verdict vocabulary changes: cached rows from an older version
 # are re-screened rather than trusted.
 SCREEN_VERSION = 1
-DEFAULT_MODEL = "claude-haiku-5-5"
 SCREEN_FILE = "screened.jsonl"
+# Empty on purpose: the name is whatever the Luminal deployment is called. Set it in the
+# profile (`screening.model`) or with LUMINAL_MODEL.
+DEFAULT_MODEL = ""
 
 VERDICTS = ("clearance", "citizenship", "none", "unclear")
 BLOCKING_VERDICTS = frozenset({"clearance", "citizenship"})
@@ -65,10 +82,12 @@ CATEGORIES = (
 
 # Below this many characters a "description" is a stub and the apply page is fetched.
 MIN_BODY_CHARS = 400
-# Postings are almost always far shorter. When one is not, keep the head (what the job is)
-# and a much longer tail, because the tail is where the eligibility paragraph lives.
-MAX_BODY_CHARS = 60_000
-HEAD_CHARS = 12_000
+# Postings are almost always shorter (~3-8k characters). When one is not, keep the head
+# (what the job is) and a much longer tail, because the tail is where the eligibility
+# paragraph lives. ~24k characters is ~6k tokens, inside the context window of the small
+# open models a serverless deployment typically runs.
+MAX_BODY_CHARS = 24_000
+HEAD_CHARS = 4_000
 
 SYSTEM_PROMPT = """You screen job postings for an international student on an F-1 visa \
 (CPT/OPT, will later need H-1B sponsorship). They cannot hold a US security clearance and \
@@ -98,7 +117,10 @@ category: the job's function - swe (software, web, mobile, cloud, platform), mle
 security, research, data (data science, analytics, data engineering), quant, hardware \
 (electrical, mechanical, manufacturing, other non-software engineering), product \
 (product/program management, design), business (finance, operations, sales, marketing, \
-HR), or other."""
+HR), or other.
+
+Reply with ONLY a JSON object, no other text:
+{"verdict": "...", "evidence": "...", "category": "..."}"""
 
 
 @dataclass(slots=True)
@@ -184,10 +206,14 @@ class Screener:
         fetch_pages: bool = True,
         max_calls: int = 300,
         workers: int = 8,
-        client=None,
+        llm_http: httpx.Client | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.cache = cache
-        self.model = model
+        self.model = (model or os.environ.get("LUMINAL_MODEL", "")).strip()
+        self.base_url = (base_url or os.environ.get("LUMINAL_BASE_URL", "")).strip().rstrip("/")
+        self.api_key = (api_key or os.environ.get("LUMINAL_API_KEY", "")).strip()
         self.http = http
         self.fetch_pages = fetch_pages
         self.max_calls = max_calls
@@ -197,8 +223,16 @@ class Screener:
         self.unscreened = 0      # wanted a verdict, did not get one (budget or failure)
         self.error: str | None = None
         self._disabled = False   # a non-retryable API error: stop calling for this run
-        self._client = client
+        self._llm = llm_http
         self._lock = threading.Lock()
+        missing = [name for name, value in (
+            ("LUMINAL_BASE_URL", self.base_url), ("LUMINAL_API_KEY", self.api_key),
+            ("screening.model / LUMINAL_MODEL", self.model),
+        ) if not value]
+        if missing:
+            self._disabled = True
+            self.error = f"not configured: {', '.join(missing)} unset"
+            log.info("screen: %s; postings go out under the regex rules", self.error)
 
     # -- reading ------------------------------------------------------------------------
 
@@ -272,17 +306,6 @@ class Screener:
         return body, "title"
 
     def _ask(self, posting: Posting, text: str, basis: str) -> tuple[str, str, str] | None:
-        import anthropic
-        from pydantic import BaseModel
-
-        class Verdict(BaseModel):
-            verdict: Literal["clearance", "citizenship", "none", "unclear"]
-            evidence: str
-            category: Literal[
-                "swe", "mle", "systems", "security", "research", "data", "quant",
-                "hardware", "product", "business", "other",
-            ]
-
         if len(text) > MAX_BODY_CHARS:
             log.info("screen: %s body is %d chars; sending head and tail",
                      posting.global_id, len(text))
@@ -294,47 +317,75 @@ class Screener:
             f"Company: {posting.company}\nTitle: {posting.title}\nLocation: {where}\n"
             f"Text source: {basis}\n\n--- POSTING ---\n{body}\n--- END ---"
         )
-        client = self._get_client(anthropic)
-        response = client.messages.parse(
-            model=self.model,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            output_config={"effort": "low"},
-            messages=[{"role": "user", "content": prompt}],
-            output_format=Verdict,
-        )
-        if response.stop_reason == "refusal" or response.parsed_output is None:
-            log.warning("screen: no verdict for %s (stop_reason=%s)",
-                        posting.global_id, response.stop_reason)
-            return None
-        out = response.parsed_output
-        return out.verdict, out.evidence, out.category
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0,
+            "max_tokens": 400,
+        }
+        reply = self._post(payload)
+        parsed = parse_reply(reply)
+        if parsed is None:
+            log.warning("screen: unparseable reply for %s: %.200r", posting.global_id, reply)
+        return parsed
 
-    def _get_client(self, anthropic):
+    def _post(self, payload: dict) -> str:
+        """POST one chat completion and return the reply text.
+
+        Retries a rate limit, a 5xx or a dropped connection twice with backoff - a
+        scale-to-zero deployment's first request of the hour can be a cold start. Anything
+        else raises for `_record_failure` to classify.
+        """
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        for attempt in range(3):
+            try:
+                response = self._client().post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"] or ""
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                if attempt == 2 or not (code == 429 or code >= 500):
+                    raise
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise
+            time.sleep(2 * (attempt + 1))
+        raise RuntimeError("unreachable")
+
+    def _client(self) -> httpx.Client:
         with self._lock:
-            if self._client is None:
-                self._client = anthropic.Anthropic(timeout=60.0, max_retries=3)
-            return self._client
+            if self._llm is None:
+                self._llm = httpx.Client(timeout=120.0)
+            return self._llm
 
     def _record_failure(self, exc: Exception) -> None:
         """Retryable failures cost one posting; anything else stops calling for this run,
-        so a bad key produces one log line instead of three hundred."""
-        try:
-            import anthropic
-        except ImportError:
-            self._disable("the `anthropic` package is not installed")
-            return
+        so a bad key or a wrong model name produces one log line instead of three hundred.
+
+        A 400 is per-posting (an over-long posting can exceed a small model's context); a
+        401/403/404 means the key, URL or model name is wrong, which no retry will fix.
+        """
         with self._lock:
             self.failed += 1
-        if isinstance(exc, anthropic.RateLimitError | anthropic.APIConnectionError):
+        if isinstance(exc, httpx.HTTPStatusError):
+            code = exc.response.status_code
+            if code in (401, 403, 404):
+                self._disable(f"HTTP {code} from Luminal - check LUMINAL_API_KEY, "
+                              f"LUMINAL_BASE_URL and the model name")
+                return
+            log.warning("screen: HTTP %s: %.200s", code, exc.response.text)
+            with self._lock:
+                self.error = self.error or f"HTTP {code} from Luminal"
+            return
+        if isinstance(exc, httpx.TransportError | KeyError | IndexError | ValueError):
             log.warning("screen: transient failure: %s", exc)
             with self._lock:
                 self.error = self.error or f"{type(exc).__name__}"
-            return
-        if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
-            log.warning("screen: server error %s", exc.status_code)
-            with self._lock:
-                self.error = self.error or f"API server error {exc.status_code}"
             return
         self._disable(f"{type(exc).__name__}: {exc}")
 
@@ -344,6 +395,35 @@ class Screener:
                 log.error("screen: disabled for this run - %s", why)
             self._disabled = True
             self.error = why[:200]
+
+
+_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def parse_reply(reply: str) -> tuple[str, str, str] | None:
+    """(verdict, evidence, category) from a model reply, or None if it is not usable.
+
+    Tolerates what open models wrap JSON in - code fences, a sentence before it, a
+    reasoning block - by taking the outermost `{...}`. Values outside the allowed
+    vocabulary are rejected rather than guessed at: an unusable reply leaves the posting
+    unscreened, which is the fail-open path, not a silent "none".
+    """
+    match = _JSON_OBJECT.search(reply or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    verdict = str(data.get("verdict", "")).strip().lower()
+    category = str(data.get("category", "other")).strip().lower() or "other"
+    if verdict not in VERDICTS:
+        return None
+    if category not in CATEGORIES:
+        category = "other"
+    return verdict, str(data.get("evidence") or ""), category
 
 
 def fetch_page_text(http: httpx.Client, url: str) -> str:

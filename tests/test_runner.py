@@ -408,9 +408,13 @@ def _long(text):
     return "<p>" + "We build reliable distributed systems for customers. " * 12 + text + "</p>"
 
 
-def _screening_profile(**kw):
+def _screening_profile(monkeypatch, **kw):
+    """A profile with the screen on, and a configured (but fake) Luminal endpoint."""
     from jobmon.profiles import Profile, Screening
-    return Profile(name="p", screening=Screening(enabled=True, fetch_pages=False, **kw))
+    monkeypatch.setenv("LUMINAL_BASE_URL", "https://luminal.invalid/v1")
+    monkeypatch.setenv("LUMINAL_API_KEY", "test-key")
+    return Profile(name="p", screening=Screening(
+        enabled=True, fetch_pages=False, model="test-model", **kw))
 
 
 def test_screen_drops_a_clearance_req_the_regex_misses(conn, wire, monkeypatch):
@@ -429,7 +433,7 @@ def test_screen_drops_a_clearance_req_the_regex_misses(conn, wire, monkeypatch):
                        body=_long("Must be able to obtain a Secret security clearance.")),
     ]))
     cache = {}
-    result = runner.run(conn, profile_list=[_screening_profile()], screen_cache=cache)
+    result = runner.run(conn, profile_list=[_screening_profile(monkeypatch)], screen_cache=cache)
     assert sent["digests"] == [["greenhouse:acme:1"]]
     assert result.profiles["p"].screened_out == 1
     assert cache["greenhouse:acme:2"].verdict == "clearance"
@@ -444,7 +448,7 @@ def test_screen_fails_open_when_the_api_is_unavailable(conn, wire, monkeypatch):
 
     monkeypatch.setattr(screen.Screener, "_ask", broken)
     sent = wire(FakeAdapter([greenhouse_job(1, title="SWE New Grad A", body=_long("x"))]))
-    result = runner.run(conn, profile_list=[_screening_profile()], screen_cache={})
+    result = runner.run(conn, profile_list=[_screening_profile(monkeypatch)], screen_cache={})
     assert sent["digests"] == [["greenhouse:acme:1"]]
     assert result.profiles["p"].screened_out == 0
 
@@ -458,4 +462,4 @@ def test_screen_toggle_off_makes_no_calls(conn, wire, monkeypatch):
     runner.run(conn, profile_list=[Profile(name="p")], screen_cache={})
     monkeypatch.setenv("JOBMON_LLM_SCREEN", "off")
     wire(FakeAdapter([greenhouse_job(2, body=_long("clearance"))]))
-    runner.run(conn, profile_list=[_screening_profile()], screen_cache={})
+    runner.run(conn, profile_list=[_screening_profile(monkeypatch)], screen_cache={})

@@ -15,14 +15,17 @@ file and points `profiles.PROFILES_DIR` at it. `tests/test_profiles.py` and
 
 import pytest
 
-from jobmon import feedback, profiles
+from jobmon import cli, feedback, profiles
 
 
 @pytest.fixture(autouse=True)
 def isolate_profiles(tmp_path, monkeypatch):
-    """Run against the built-in default profile and an empty feedback store."""
+    """Run against the built-in default profile and an empty feedback store - and never
+    against the developer's real `.env`, whose ntfy topic or API keys would otherwise leak
+    into tests that assert what happens when they are unset."""
     empty = tmp_path / "no-profiles"
     empty.mkdir()
     monkeypatch.setattr(profiles, "PROFILES_DIR", empty)
     monkeypatch.setattr(feedback, "FEEDBACK_DIR", tmp_path / "feedback")
+    monkeypatch.setattr(cli, "ENV_FILE", tmp_path / "no.env")
     return empty
