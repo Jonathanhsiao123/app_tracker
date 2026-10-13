@@ -327,3 +327,10 @@
 {"alerted_at":"2026-10-13T07:37:08.628605+00:00","channel":"digest","global_id":"workable:perry-homes:1741F57CCC","score":0.346875}
 {"alerted_at":"2026-10-13T15:52:08.814171+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5262503007","score":0.596875}
 {"alerted_at":"2026-10-13T19:26:03.983678+00:00","channel":"digest","global_id":"greenhouse:verkada:5264492007","score":0.460625}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:f-g:af55dcfdedde19f8","score":0.40812499999999996}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:f-g:d550da27120a8c02","score":0.40812499999999996}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:impact-advisors:704260c7e82bd93d","score":0.40812499999999996}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:west-monroe:9694a5598684fbbb","score":0.36062500000000003}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"github_repo:west-monroe:a0ce6cf4a08c3185","score":0.575}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"greenhouse:verkada:5262546007","score":0.8943749999999999}
+{"alerted_at":"2026-10-13T21:10:34.225388+00:00","channel":"digest","global_id":"workable:tmeic-americas:C4B8B72648","score":0.75}
