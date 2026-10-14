@@ -352,3 +352,8 @@
 {"alerted_at":"2026-10-14T18:47:11.077166+00:00","channel":"digest","global_id":"lever:palantir:c6f9eaaf-b397-476f-8b7d-c511cfb7e5c6","score":0.535625}
 {"alerted_at":"2026-10-14T20:34:36.121209+00:00","channel":"digest","global_id":"greenhouse:point72:8888064002","score":0.36062500000000003}
 {"alerted_at":"2026-10-14T22:28:10.857272+00:00","channel":"digest","global_id":"greenhouse:anduril-industries:5265127007","score":0.44666666666666666}
+{"alerted_at":"2026-10-14T23:51:44.257246+00:00","channel":"digest","global_id":"ashby:persona:6069ae62-74ea-4d48-8832-2863dbc27805","score":0.505}
+{"alerted_at":"2026-10-14T23:51:44.257246+00:00","channel":"digest","global_id":"github_repo:agco:068af44e946094e0","score":0.37749999999999995}
+{"alerted_at":"2026-10-14T23:51:44.257246+00:00","channel":"digest","global_id":"github_repo:covestro:07ac523089d10635","score":0.48312499999999997}
+{"alerted_at":"2026-10-14T23:51:44.257246+00:00","channel":"digest","global_id":"github_repo:tiktok:148ad6e9ee40fa85","score":0.575}
+{"alerted_at":"2026-10-14T23:51:44.257246+00:00","channel":"digest","global_id":"github_repo:tiktok:54a96068d4cab9f7","score":0.825}
