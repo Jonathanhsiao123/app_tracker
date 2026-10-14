@@ -343,3 +343,5 @@
 {"alerted_at":"2026-10-14T01:05:42.486827+00:00","channel":"digest","global_id":"ashby:elevenlabs:38bac641-02de-414d-96f3-d0adb603cb89","score":0.833125}
 {"alerted_at":"2026-10-14T01:05:42.486827+00:00","channel":"digest","global_id":"workable:talentpluto:2FD7592C5C","score":0.535625}
 {"alerted_at":"2026-10-14T01:05:42.486827+00:00","channel":"digest","global_id":"workable:talentpluto:76D308E03F","score":0.36062500000000003}
+{"alerted_at":"2026-10-14T02:03:27.071620+00:00","channel":"digest","global_id":"ashby:citizen-health:cbed077f-b20b-4c10-9e7a-680c58d79d8d","score":0.36062500000000003}
+{"alerted_at":"2026-10-14T02:03:27.071620+00:00","channel":"digest","global_id":"github_repo:tiktok:d1ef9eb60353b8dd","score":0.575}
