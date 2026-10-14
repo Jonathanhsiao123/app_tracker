@@ -345,3 +345,6 @@
 {"alerted_at":"2026-10-14T01:05:42.486827+00:00","channel":"digest","global_id":"workable:talentpluto:76D308E03F","score":0.36062500000000003}
 {"alerted_at":"2026-10-14T02:03:27.071620+00:00","channel":"digest","global_id":"ashby:citizen-health:cbed077f-b20b-4c10-9e7a-680c58d79d8d","score":0.36062500000000003}
 {"alerted_at":"2026-10-14T02:03:27.071620+00:00","channel":"digest","global_id":"github_repo:tiktok:d1ef9eb60353b8dd","score":0.575}
+{"alerted_at":"2026-10-14T17:02:25.896158+00:00","channel":"digest","global_id":"greenhouse:atoms:8888411002","score":0.733125}
+{"alerted_at":"2026-10-14T17:02:25.896158+00:00","channel":"digest","global_id":"greenhouse:point72:8885299002","score":0.4275}
+{"alerted_at":"2026-10-14T17:02:25.896158+00:00","channel":"digest","global_id":"greenhouse:point72:8885733002","score":0.48312499999999997}
