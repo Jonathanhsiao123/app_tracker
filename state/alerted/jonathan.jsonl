@@ -368,3 +368,7 @@
 {"alerted_at":"2026-10-15T13:36:04.212178+00:00","channel":"digest","global_id":"ashby:ramp:7e531974-caac-46a2-804e-c6c3140bfda4","score":0.665625}
 {"alerted_at":"2026-10-15T13:36:04.212178+00:00","channel":"digest","global_id":"greenhouse:schonfeld:8281961","score":0.36062500000000003}
 {"alerted_at":"2026-10-15T13:36:04.212178+00:00","channel":"digest","global_id":"lever:palantir:7fa0ceca-c30e-48de-9b27-f98469c374f3","score":0.908125}
+{"alerted_at":"2026-10-15T17:23:50.313371+00:00","channel":"digest","global_id":"ashby:quora:40659fe7-545e-4b08-b6d7-2567b18b9ed3","score":0.7}
+{"alerted_at":"2026-10-15T17:23:50.313371+00:00","channel":"digest","global_id":"greenhouse:schonfeld:8285213","score":0.6997916666666667}
+{"alerted_at":"2026-10-15T17:23:50.313371+00:00","channel":"digest","global_id":"greenhouse:syska-hennessy:8286629","score":0.610625}
+{"alerted_at":"2026-10-15T17:23:50.313371+00:00","channel":"digest","global_id":"greenhouse:verkada:4759062007","score":0.6531250000000001}
